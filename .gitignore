@@ -39,3 +39,13 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+
+ai-investor-agent/.venv/
+ai-investor-agent/.env
+ai-investor-agent/__pycache__/
+ai-investor-agent/*.pyc
+ai-investor-agent/.pytest_cache/
+ai-investor-agent/.mypy_cache/
+ai-investor-agent/.ruff_cache/
+ai-investor-agent/.DS_Store

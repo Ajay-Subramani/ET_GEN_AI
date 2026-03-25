@@ -1,0 +1,17 @@
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+streamlit==1.49.1
+langgraph==0.6.6
+langchain-core==0.3.75
+supabase==2.17.0
+psycopg[binary]==3.2.10
+pydantic==2.11.7
+pydantic-settings==2.10.1
+pandas==2.3.2
+numpy==2.3.2
+yfinance==0.2.65
+nsepython==2.97
+TA-Lib==0.6.5
+httpx==0.28.1
+python-dotenv==1.1.1
+pytest==8.4.1
