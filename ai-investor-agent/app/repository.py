@@ -159,7 +159,7 @@ class Repository:
                 signal_stack=signal_stack,
                 similar_setups=0,
                 exact_matches=0,
-                success_rate=0.5,
+                success_rate=0.0,
                 avg_return_pct=0.0,
                 target_hits=0,
                 stop_loss_hits=0,

@@ -799,51 +799,68 @@ function ResultsScreen({
               </div>
               <div className="h-2 overflow-hidden rounded-full bg-[color:var(--surface-high)]">
                 <div
-                  className="primary-gradient h-full"
-                  style={{ width: `${recommendation.confidence_pct}%` }}
+                   className="h-full transition-all duration-500"
+                   style={{ 
+                     width: `${recommendation.confidence_pct}%`,
+                     backgroundColor: recommendation.confidence_pct < 30 
+                       ? 'var(--danger)' 
+                       : recommendation.confidence_pct < 60 
+                         ? 'var(--warning)' 
+                         : 'var(--primary)'
+                   }}
                 />
               </div>
             </div>
           </section>
 
-          <section className="editorial-shadow rounded-[20px] bg-white p-8">
-            <h3 className="mb-6 text-xs uppercase tracking-[0.28em] text-slate-500">
-              Execution Plan
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-3">
-              <div className="py-4 md:pr-8">
-                <p className="mb-2 text-xs text-slate-500">Ideal Entry Range</p>
-                <p className="font-mono text-2xl font-bold">
-                  {formatCurrency(recommendation.entry_price * 0.99)} - {" "}
-                  {formatCurrency(recommendation.entry_price * 1.01)}
-                </p>
+          {recommendation.action !== "AVOID" && recommendation.confidence_pct >= 30 ? (
+            <section className="editorial-shadow rounded-[20px] bg-white p-8">
+              <h3 className="mb-6 text-xs uppercase tracking-[0.28em] text-slate-500">
+                Execution Plan
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-3">
+                <div className="py-4 md:pr-8">
+                  <p className="mb-2 text-xs text-slate-500">Ideal Entry Range</p>
+                  <p className="font-mono text-2xl font-bold">
+                    {formatCurrency(recommendation.entry_price * 0.99)} - {" "}
+                    {formatCurrency(recommendation.entry_price * 1.01)}
+                  </p>
+                </div>
+                <div className="border-y border-[color:var(--surface-high)] py-4 md:border-x md:border-y-0 md:px-8">
+                  <p className="mb-2 text-xs text-slate-500">Profit Target</p>
+                  <p className="font-mono text-2xl font-bold text-[color:var(--success)]">
+                    {formatCurrency(recommendation.target_price)}
+                  </p>
+                  <p className="mt-1 text-[10px] text-slate-500">
+                    Potential Upside:{" "}
+                    {formatPercent(
+                      ((recommendation.target_price - recommendation.entry_price) /
+                        recommendation.entry_price) *
+                        100,
+                    )}
+                  </p>
+                </div>
+                <div className="py-4 md:pl-8">
+                  <p className="mb-2 text-xs text-slate-500">Stop Loss</p>
+                  <p className="font-mono text-2xl font-bold text-[color:var(--danger)]">
+                    {formatCurrency(recommendation.stop_loss)}
+                  </p>
+                  <p className="mt-1 text-[10px] text-slate-500">
+                    Risk per unit:{" "}
+                    {formatCurrency(recommendation.entry_price - recommendation.stop_loss)}
+                  </p>
+                </div>
               </div>
-              <div className="border-y border-[color:var(--surface-high)] py-4 md:border-x md:border-y-0 md:px-8">
-                <p className="mb-2 text-xs text-slate-500">Profit Target</p>
-                <p className="font-mono text-2xl font-bold text-[color:var(--success)]">
-                  {formatCurrency(recommendation.target_price)}
-                </p>
-                <p className="mt-1 text-[10px] text-slate-500">
-                  Potential Upside:{" "}
-                  {formatPercent(
-                    ((recommendation.target_price - recommendation.entry_price) /
-                      recommendation.entry_price) *
-                      100,
-                  )}
-                </p>
-              </div>
-              <div className="py-4 md:pl-8">
-                <p className="mb-2 text-xs text-slate-500">Stop Loss</p>
-                <p className="font-mono text-2xl font-bold text-[color:var(--danger)]">
-                  {formatCurrency(recommendation.stop_loss)}
-                </p>
-                <p className="mt-1 text-[10px] text-slate-500">
-                  Risk per unit:{" "}
-                  {formatCurrency(recommendation.entry_price - recommendation.stop_loss)}
-                </p>
-              </div>
-            </div>
-          </section>
+            </section>
+          ) : (
+            <section className="rounded-[20px] border-2 border-dashed border-[color:var(--outline-variant)]/30 p-8 text-center bg-slate-50/30">
+              <p className="font-serif text-xl italic text-slate-500">
+                {recommendation.action === "AVOID" 
+                  ? "Execution plan suppressed. System recommends capital preservation." 
+                  : "Execution plan hidden due to low structural confidence (< 30%). Wait for stronger alignment."}
+              </p>
+            </section>
+          )}
 
           <section className="rounded-[20px] bg-[color:var(--surface-low)] p-8">
             <div className="mb-4 flex items-center gap-3">
@@ -893,10 +910,14 @@ function ResultsScreen({
               </div>
               <div className="text-right">
                 <div className="font-mono text-2xl font-bold text-[color:var(--primary)]">
-                  {formatPercent(recommendation.setup_memory.success_rate * 100)}
+                  {recommendation.setup_memory.similar_setups > 0 
+                    ? formatPercent(recommendation.setup_memory.success_rate * 100)
+                    : "0%"}
                 </div>
                 <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">
-                  Historical Success
+                  {recommendation.setup_memory.similar_setups > 0 
+                    ? "Historical Success" 
+                    : "No Data Found"}
                 </p>
               </div>
             </div>
@@ -911,7 +932,9 @@ function ResultsScreen({
               />
               <MetricCard
                 label="Avg. Return"
-                value={formatPercent(recommendation.setup_memory.avg_return_pct)}
+                value={recommendation.setup_memory.similar_setups > 0 
+                  ? formatPercent(recommendation.setup_memory.avg_return_pct)
+                  : "N/A"}
               />
               <MetricCard
                 label="Target Hits"
@@ -934,13 +957,13 @@ function ResultsScreen({
             <span className="mb-2 block text-xs uppercase tracking-[0.26em] text-slate-500">
               Portfolio Action
             </span>
-            <p className={`font-serif text-3xl ${styles.accent}`}>
-              {formatPercent(recommendation.allocation_pct)}
+            <p className={`font-serif text-3xl ${recommendation.allocation_pct > 0 ? styles.accent : 'text-slate-400'}`}>
+              {recommendation.allocation_pct > 0 ? formatPercent(recommendation.allocation_pct) : "0.0% Allocation"}
             </p>
             <p className="mt-3 text-sm leading-7 text-slate-600">
-              Allocate {formatCurrency(recommendation.allocation_amount)} with
-              same-sector exposure currently at {" "}
-              {formatPercent(recommendation.sector_exposure_pct)}.
+              {recommendation.allocation_pct > 0 
+                ? `Allocate ${formatCurrency(recommendation.allocation_amount)} with same-sector exposure currently at ${formatPercent(recommendation.sector_exposure_pct)}.`
+                : "No capital deployment recommended for this risk profile. Maintain current liquidity."}
             </p>
             <p className="mt-4 rounded-2xl bg-white px-4 py-3 text-sm text-slate-600">
               {recommendation.next_step}
@@ -971,16 +994,17 @@ function ResultsScreen({
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="mb-1 flex items-center gap-3">
+                  <div className="mb-1 flex flex-wrap items-center gap-2">
                     <span className="font-mono text-lg font-bold">
                       {recommendation.symbol}
                     </span>
-                    <span className="rounded bg-[color:var(--surface-low)] px-2 py-0.5 font-mono text-xs uppercase">
+                    <span className="rounded bg-[color:var(--surface-low)] px-2 py-0.5 font-mono text-[10px] uppercase text-slate-500">
                       {recommendation.setup_memory.market_condition}
                     </span>
-                  </div>
-                  <div className="text-sm text-slate-500">
-                    {recommendation.setup_memory.pattern_name.replaceAll("_", " ")}
+                    <span className="text-xs text-slate-400">·</span>
+                    <span className="text-xs font-medium text-slate-500">
+                      {recommendation.setup_memory.pattern_name.replaceAll("_", " ")}
+                    </span>
                   </div>
                 </div>
                 <div className="text-right">

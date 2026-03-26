@@ -82,10 +82,14 @@ class SetupMemory(BaseModel):
 
     @property
     def narrative(self) -> str:
+        count = max(self.exact_matches, self.similar_setups)
+        if count == 0:
+            return "no historical occurrences found for this signal profile"
+        
         setup_scope = "this exact setup" if self.exact_matches else "similar setups"
         return (
-            f"{setup_scope} appeared {max(self.exact_matches, self.similar_setups)} times, "
-            f"won {self.success_rate * 100:.0f}% of the time, and averaged {self.avg_return_pct:.1f}%."
+            f"{setup_scope} appeared {count} times, "
+            f"won {self.success_rate * 100:.0f}% of the time, and averaged {self.avg_return_pct:.1f}%"
         )
 
 
@@ -138,10 +142,14 @@ class FinalRecommendation(BaseModel):
 
     @property
     def summary(self) -> str:
-        return (
-            f"Do {self.action} at Rs {self.entry_price:.2f} because {self.analyst_note}, "
-            f"with confidence {self.confidence_pct:.1f}%."
-        )
+        # Prevent punctuation collision by checking if analyst_note ends with terminal punctuation
+        note = self.analyst_note.strip()
+        if note.endswith(".") or note.endswith("!"):
+            sentence_connector = "Structural confidence is"
+        else:
+            sentence_connector = "with structural confidence of"
+            
+        return f"Do {self.action} at Rs {self.entry_price:.2f} because {note} {sentence_connector} {self.confidence_pct:.1f}%."
 
 
 class AgentState(TypedDict, total=False):

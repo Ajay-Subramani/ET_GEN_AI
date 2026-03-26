@@ -268,7 +268,7 @@ class AnalystNodes:
         ]
         analyst_note = (
             f"{signal_bundle.symbol} is showing {strong_signal_count} aligned signals: {lead_signal_text}. "
-            f"Pattern memory says {setup_memory.narrative} "
+            f"Pattern memory reveals {setup_memory.narrative}. "
             f"{confidence_note}"
         )
         confirmation_triggers = [
