@@ -144,6 +144,374 @@ Implemented in `streamlit_app.py`.
 
 - Pick a demo user and symbol, run analysis, view portfolio-aware recommendation and data sources used.
 
+## Existing System Inventory
+
+This section is the current implementation inventory for product, frontend, and integration work. It describes what is actually wired in code today, what contracts are stable enough for a frontend to consume, and what exists only at the schema/demo layer.
+
+### 1. Systems Present in the Repository
+
+#### LangGraph recommendation engine
+
+- Entry point: `app/graph.py::run_recommendation(symbol, user_id)`
+- Execution model: synchronous, 5-node sequential workflow
+- Output contract: `FinalRecommendation` from `app/models.py`
+- Use case: direct Python integration, internal jobs, and the FastAPI/Streamlit layers
+
+#### FastAPI service layer
+
+- File: `app/main.py`
+- Use case: frontend/backend integration over HTTP
+- Default FastAPI docs also exist at:
+  - `GET /docs`
+  - `GET /openapi.json`
+- Auth: not implemented
+- Async/background processing: not implemented
+
+#### Streamlit demo frontend
+
+- File: `streamlit_app.py`
+- Use case: internal demo and operator UI
+- Integration mode: calls Python modules directly, not the HTTP API
+
+#### Repository and persistence layer
+
+- File: `app/repository.py`
+- Primary role: read stocks, historical pattern stats, user portfolios, setup memory, and write realized outcomes
+- Persistence modes:
+  - Supabase/Postgres when `SUPABASE_URL` and `SUPABASE_KEY` are configured
+  - deterministic in-memory/demo fallback when unavailable
+
+#### Market data adapter layer
+
+- File: `app/data_sources.py`
+- Live providers when available:
+  - `yfinance`
+  - `nsepython`
+  - `TA-Lib`
+- Fallback mode:
+  - demo history
+  - demo bulk deals
+  - demo delivery percentages
+  - demo market/sector snapshots
+  - demo option-chain support
+
+### 2. Functional Capabilities Implemented Today
+
+#### Recommendation workflow
+
+- Symbol normalization to uppercase
+- 5-step recommendation flow:
+  - signal detection
+  - context enrichment
+  - technical analysis
+  - decisioning
+  - portfolio-aware personalization
+- Final actions supported:
+  - `BUY`
+  - `WATCH`
+  - `AVOID`
+- Conviction modes supported:
+  - `HIGH_CONVICTION`
+  - `ALIGNED`
+  - `NORMAL`
+
+#### Signal detection
+
+Signals currently implemented in code:
+
+- `bulk_deal`
+- `delivery_spike`
+- `volume_breakout`
+- `oi_buildup`
+- `pattern_start`
+
+Each signal returned to callers includes:
+
+- `type`
+- `weight`
+- `details`
+- `source`
+
+#### Context enrichment
+
+- Historical pattern success lookup per symbol/pattern
+- Sector trend and strength lookup via sector ETF proxy mapping
+- Market breadth, Nifty trend, and volatility regime snapshot
+- Returned context contains:
+  - `historical`
+  - `sector`
+  - `market`
+
+#### Technical analysis
+
+Patterns currently recognized:
+
+- `breakout`
+- `support_bounce`
+
+Derived technical outputs:
+
+- current price
+- pattern detected/not detected
+- historical pattern success rate
+- historical average return
+- support
+- resistance
+- option OI support when available
+- risk/reward ratio
+- entry price
+- target price
+- stop loss
+
+#### Adaptive memory
+
+- Reads prior recommendation outcomes by symbol and pattern
+- Filters by market regime
+- Tracks exact signal-stack matches when the requested stack is a subset of a stored stack
+- Produces:
+  - `similar_setups`
+  - `exact_matches`
+  - `success_rate`
+  - `avg_return_pct`
+  - `signal_stack`
+  - `source`
+  - narrative text via `setup_memory.narrative`
+
+#### Portfolio-aware personalization
+
+- Reads a user portfolio by `user_id`
+- Uses risk-profile-based max allocation
+- Computes current same-sector exposure
+- Reduces allocation if sector exposure exceeds `30%`
+- Reduces allocation for `WATCH`
+- Zero allocation for `AVOID`
+- Returns:
+  - `allocation_pct`
+  - `allocation_amount`
+  - `sector_exposure_pct`
+  - `personalization_warning`
+  - `next_step`
+
+### 3. Frontend-Consumable APIs
+
+These are the only HTTP endpoints implemented today.
+
+#### `GET /health`
+
+Purpose:
+- service liveness and environment label
+
+Response:
+- `status`
+- `env`
+
+#### `GET /demo/users`
+
+Purpose:
+- bootstrap the demo frontend with a default user and portfolio payload
+
+Response:
+- `default_user_id`
+- `demo_user`
+
+Notes:
+- despite the plural route name, this currently returns one default demo user payload, not a full user list
+
+#### `POST /analyze`
+
+Purpose:
+- run the full 5-step recommendation workflow for a symbol and user
+
+Request body:
+
+```json
+{
+  "symbol": "TATASTEEL",
+  "user_id": "demo_moderate"
+}
+```
+
+Response body:
+
+- Top-level trade decision:
+  - `symbol`
+  - `user_id`
+  - `action`
+  - `confidence_pct`
+  - `conviction_mode`
+  - `confidence_note`
+- Price plan:
+  - `entry_price`
+  - `target_price`
+  - `stop_loss`
+- Explanation fields:
+  - `reasoning`
+  - `analyst_note`
+  - `summary`
+- Memory block:
+  - `setup_memory.symbol`
+  - `setup_memory.pattern_name`
+  - `setup_memory.market_condition`
+  - `setup_memory.signal_stack`
+  - `setup_memory.similar_setups`
+  - `setup_memory.exact_matches`
+  - `setup_memory.success_rate`
+  - `setup_memory.avg_return_pct`
+  - `setup_memory.source`
+- Personalization block:
+  - `allocation_pct`
+  - `allocation_amount`
+  - `sector_exposure_pct`
+  - `personalization_warning`
+  - `next_step`
+- UX helper lists:
+  - `watch_next`
+  - `confirmation_triggers`
+  - `invalidation_triggers`
+- Source provenance:
+  - `sources.signals`
+  - `sources.historical`
+  - `sources.sector`
+  - `sources.market`
+  - `sources.technical`
+
+Frontend guidance:
+
+- This is the main endpoint a web or mobile client should use.
+- The response already contains presentational helper text (`summary`, `confidence_note`, `analyst_note`, `next_step`) in addition to raw numbers.
+- No pagination, batching, streaming, or websocket updates are implemented.
+
+#### `GET /memory/{symbol}`
+
+Purpose:
+- retrieve setup-memory statistics for one symbol/pattern/regime combination
+
+Path parameter:
+- `symbol`
+
+Query parameters:
+- `pattern_name` (required)
+- `market_condition` (optional, defaults to `neutral`)
+
+Response:
+- `symbol`
+- `pattern_name`
+- `market_condition`
+- `signal_stack`
+- `similar_setups`
+- `exact_matches`
+- `success_rate`
+- `avg_return_pct`
+- `source`
+
+Important limitation:
+
+- this endpoint does not accept `signal_stack`, so it cannot return exact-match memory scoped to a specific frontend-selected signal combination
+
+#### `POST /outcomes`
+
+Purpose:
+- record a realized trade outcome and immediately return refreshed setup memory
+
+Request body:
+
+```json
+{
+  "user_id": "demo_moderate",
+  "symbol": "TATASTEEL",
+  "pattern_name": "breakout",
+  "action": "BUY",
+  "market_condition": "neutral",
+  "signal_stack": ["bulk_deal", "delivery_spike", "oi_buildup"],
+  "entry_price": 133.0,
+  "target_price": 149.0,
+  "stop_loss": 126.0,
+  "outcome_return_pct": 13.1,
+  "outcome_horizon_days": 16,
+  "outcome_label": "win"
+}
+```
+
+Response:
+- `stored_outcome`
+- `updated_memory`
+
+Frontend guidance:
+
+- This is the only write API currently exposed.
+- There is no update/delete outcome API.
+
+### 4. Contracts the Frontend Can Reliably Assume
+
+#### Supported demo users
+
+- `demo_moderate`
+- `demo_aggressive`
+
+#### Supported demo seed symbols
+
+- `TATASTEEL`
+- `RELIANCE`
+- `HDFCBANK`
+- `INFY`
+- `SUNPHARMA`
+
+#### Supported risk profiles in code
+
+- `aggressive`
+- `moderate`
+- `conservative`
+
+#### Supported market conditions in code
+
+- `risk_on`
+- `neutral`
+- `risk_off`
+
+#### Source labels the frontend may see
+
+- `demo`
+- `yfinance`
+- `nsepython`
+- `supabase`
+- `supabase+technical`
+- `demo+demo`
+- `demo+n/a`
+- `demo+nsepython`
+
+### 5. Database and Backend Surfaces
+
+Tables actively used by the running application code:
+
+- `stocks`
+- `pattern_success_rates`
+- `user_portfolios`
+- `recommendation_outcomes`
+
+Tables present in schema but not exposed through current app logic:
+
+- `bulk_deals`
+  - schema exists, but runtime bulk-deal reads currently come from `nsepython` or demo data, not this table
+- `alerts`
+  - schema exists, but there is no API, no repository method, and no frontend flow using it yet
+
+### 6. Current Gaps / Non-Capabilities
+
+These capabilities are not implemented today and should not be assumed by frontend work:
+
+- no authentication or authorization
+- no user management API
+- no endpoint to list stocks or symbol metadata
+- no endpoint to list all portfolios or all demo users
+- no endpoint to retrieve raw signals, raw context, or raw technical objects independently
+- no bulk or multi-symbol analyze endpoint
+- no async job queue, progress updates, or streaming token/event output
+- no alert creation or alert retrieval API despite the `alerts` table existing in schema
+- no portfolio write/update endpoint
+- no outcome update/delete endpoint
+- no guarantee that live NSE/Yahoo sources will be available at runtime; demo fallback is part of the intended behavior
+- no dedicated JavaScript/TypeScript SDK; frontend integration is plain HTTP against FastAPI
+
 ## Python Version
 
 Use Python `3.11`, `3.12`, or `3.13`.
