@@ -9,16 +9,16 @@ export interface PortfolioHolding {
   sector: string;
 }
 
-export interface DemoUserPortfolio {
+export interface UserPortfolio {
   user_id?: string;
   risk_profile: RiskProfile;
   total_capital: number;
   holdings: PortfolioHolding[];
 }
 
-export interface DemoUsersResponse {
+export interface UsersResponse {
   default_user_id: string;
-  demo_user: DemoUserPortfolio;
+  user_portfolio: UserPortfolio;
 }
 
 export interface SetupMemory {

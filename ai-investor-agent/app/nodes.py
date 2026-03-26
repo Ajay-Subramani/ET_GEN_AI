@@ -115,7 +115,7 @@ class AnalystNodes:
                 similar_setups=int(history["total_occurrences"]),
                 success_rate=float(history["success_rate"]),
                 avg_return_pct=float(history["avg_return_pct"]),
-                source="supabase" if self.repo.is_configured else "demo",
+                source="supabase" if self.repo.is_configured else "none",
             ),
             sector=SectorContext(
                 trend=sector["trend"],
@@ -184,7 +184,7 @@ class AnalystNodes:
                 oi_support=oi_support,
                 risk_reward_ratio=risk_reward,
                 details=details + (f"; option OI support at Rs {oi_support:.2f}" if oi_support else ""),
-                source="supabase+technical" if self.repo.is_configured else f"demo+{oi_source}",
+                source="supabase+technical" if self.repo.is_configured else f"failed+{oi_source}",
             ),
             entry_price=current_price,
             target_price=target_price,

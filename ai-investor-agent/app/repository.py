@@ -8,13 +8,6 @@ from supabase import Client, create_client
 from postgrest.exceptions import APIError
 
 from app.config import get_settings
-from app.demo_data import (
-    DEMO_PATTERN_SUCCESS,
-    DEMO_RECOMMENDATION_OUTCOMES,
-    DEMO_SETUP_MEMORY,
-    DEMO_STOCKS,
-    DEMO_USER_PORTFOLIOS,
-)
 from app.models import SetupMemory
 
 
@@ -43,13 +36,8 @@ class Repository:
                 if result.data:
                     return result.data[0]
             except APIError as e:
-                logging.warning(f"Failed to fetch stock {normalized} from Supabase: {e}")
-        return {"symbol": normalized, **DEMO_STOCKS.get(normalized, {
-            "name": normalized,
-            "sector": "Unknown",
-            "market_cap": 0.0,
-            "is_fno": False,
-        })}
+                logging.error(f"Failed to fetch stock {normalized} from Supabase: {e}")
+        return {"symbol": normalized, "name": normalized, "sector": "Unknown", "market_cap": 0.0, "is_fno": False}
 
     def get_pattern_success(self, symbol: str, pattern_name: str) -> dict[str, Any]:
         normalized = symbol.upper()
@@ -66,16 +54,13 @@ class Repository:
                 if result.data:
                     return result.data[0]
             except APIError as e:
-                logging.warning(f"Failed to fetch pattern {pattern_name} for {normalized} from Supabase: {e}")
-        return DEMO_PATTERN_SUCCESS.get(
-            (normalized, pattern_name),
-            {
-                "total_occurrences": 10,
-                "successful_occurrences": 6,
-                "success_rate": 0.60,
-                "avg_return_pct": 4.8,
-            },
-        )
+                logging.error(f"Failed to fetch pattern {pattern_name} for {normalized} from Supabase: {e}")
+        return {
+            "total_occurrences": 0,
+            "successful_occurrences": 0,
+            "success_rate": 0.0,
+            "avg_return_pct": 0.0,
+        }
 
     def get_user_portfolio(self, user_id: str) -> dict[str, Any]:
         if self._client:
@@ -90,8 +75,8 @@ class Repository:
                 if result.data:
                     return result.data[0]
             except APIError as e:
-                logging.warning(f"Failed to fetch user portfolio {user_id} from Supabase: {e}")
-        return {"user_id": user_id, **DEMO_USER_PORTFOLIOS.get(user_id, DEMO_USER_PORTFOLIOS["demo_moderate"])}
+                logging.error(f"Failed to fetch user portfolio {user_id} from Supabase: {e}")
+        return {"user_id": user_id, "risk_profile": "moderate", "total_capital": 0.0, "holdings": []}
 
     def get_setup_memory(
         self,
@@ -121,31 +106,16 @@ class Repository:
                         source="supabase",
                     )
             except APIError as e:
-                logging.warning(f"Failed to fetch setup memory from Supabase: {e}")
-
-        rows = [
-            row
-            for row in DEMO_RECOMMENDATION_OUTCOMES
-            if row["symbol"] == normalized and row["pattern_name"] == pattern_name
-        ]
-        memory = self._aggregate_setup_memory(
+                logging.error(f"Failed to fetch setup memory from Supabase: {e}")
+        
+        return self._aggregate_setup_memory(
             normalized=normalized,
             pattern_name=pattern_name,
             market_condition=market_condition,
             signal_stack=signal_stack,
-            rows=rows,
-            source="demo",
+            rows=[],
+            source="none",
         )
-        demo_key = (normalized, pattern_name, market_condition)
-        if demo_key in DEMO_SETUP_MEMORY:
-            seeded = DEMO_SETUP_MEMORY[demo_key]
-            memory.similar_setups = max(memory.similar_setups, seeded["similar_setups"])
-            memory.exact_matches = max(memory.exact_matches, seeded["exact_matches"])
-            memory.success_rate = round((memory.success_rate + seeded["success_rate"]) / 2, 2)
-            memory.avg_return_pct = round((memory.avg_return_pct + seeded["avg_return_pct"]) / 2, 2)
-            if not memory.signal_stack:
-                memory.signal_stack = seeded["signal_stack"]
-        return memory
 
     def record_outcome(self, payload: dict[str, Any]) -> dict[str, Any]:
         body = {
@@ -167,8 +137,7 @@ class Repository:
                 result = self._client.table("recommendation_outcomes").insert(body).execute()
                 return result.data[0] if result.data else body
             except APIError as e:
-                logging.warning(f"Failed to record outcome to Supabase: {e}")
-        DEMO_RECOMMENDATION_OUTCOMES.append(body)
+                logging.error(f"Failed to record outcome to Supabase: {e}")
         return body
 
     def _aggregate_setup_memory(

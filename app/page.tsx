@@ -1,15 +1,17 @@
 "use client";
 
 import { useEffect, useEffectEvent, useMemo, useState, useTransition } from "react";
+import { supabase } from "@/lib/supabase";
+import Auth from "@/components/Auth";
 import type {
-  DemoUserPortfolio,
-  DemoUsersResponse,
   HealthResponse,
   OutcomeLabel,
   OutcomeRequest,
   OutcomeResponse,
   RecommendationResponse,
   RiskProfile,
+  UserPortfolio,
+  UsersResponse,
 } from "@/lib/ai-investor";
 
 const SYMBOLS = ["TATASTEEL", "RELIANCE", "HDFCBANK", "INFY", "SUNPHARMA"];
@@ -44,7 +46,7 @@ const ACTION_STYLES: Record<
   },
 };
 
-const DEFAULT_PORTFOLIO: DemoUserPortfolio = {
+const DEFAULT_PORTFOLIO: UserPortfolio = {
   risk_profile: "moderate",
   total_capital: 0,
   holdings: [],
@@ -93,11 +95,13 @@ export default function Home() {
   const [riskProfile, setRiskProfile] = useState<RiskProfile>("moderate");
   const [symbol, setSymbol] = useState("TATASTEEL");
   const [health, setHealth] = useState<HealthResponse | null>(null);
-  const [portfolio, setPortfolio] = useState<DemoUserPortfolio>(DEFAULT_PORTFOLIO);
+  const [portfolio, setPortfolio] = useState<UserPortfolio>(DEFAULT_PORTFOLIO);
   const [recommendation, setRecommendation] =
     useState<RecommendationResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showOutcomeModal, setShowOutcomeModal] = useState(false);
+  const [session, setSession] = useState<any>(null);
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
   const [outcomeLabel, setOutcomeLabel] = useState<OutcomeLabel>("win");
   const [outcomeReturnPct, setOutcomeReturnPct] = useState("8.5");
   const [outcomeHorizonDays, setOutcomeHorizonDays] = useState("14");
@@ -105,18 +109,34 @@ export default function Home() {
   const [isAnalyzing, startAnalyzeTransition] = useTransition();
   const [isSavingOutcome, startOutcomeTransition] = useTransition();
 
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setIsAuthChecking(false);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+
   const refreshBootstrap = useEffectEvent(async () => {
-    const [healthResponse, demoResponse] = await Promise.all([
+    const [healthResponse, usersResponse] = await Promise.all([
       fetchJson<HealthResponse>("/api/health"),
-      fetchJson<DemoUsersResponse>("/api/demo-users"),
+      fetchJson<UsersResponse>(`/api/users?user_id=${session?.user?.id || "user_default"}`),
     ]);
 
     setHealth(healthResponse);
     setPortfolio({
-      ...demoResponse.demo_user,
-      user_id: demoResponse.default_user_id,
+      ...usersResponse.user_portfolio,
+      user_id: usersResponse.default_user_id,
     });
-    setRiskProfile(demoResponse.demo_user.risk_profile);
+    setRiskProfile(usersResponse.user_portfolio.risk_profile);
   });
 
   useEffect(() => {
@@ -131,15 +151,17 @@ export default function Home() {
     });
   }, []);
 
-  const effectiveUserId = useMemo(() => {
-    return `demo_${riskProfile}`;
-  }, [riskProfile]);
+  const effectiveUserId = session?.user?.id || "user_default";
 
   const latestComputedAt = new Intl.DateTimeFormat("en-IN", {
     dateStyle: "medium",
     timeStyle: "medium",
     timeZone: "Asia/Kolkata",
   }).format(new Date());
+
+  const handleSignOut = () => {
+    supabase.auth.signOut();
+  };
 
   const inferredCapital = useMemo(() => {
     if (recommendation && recommendation.allocation_pct > 0) {
@@ -250,10 +272,26 @@ export default function Home() {
     },
   ];
 
+  if (isAuthChecking) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50">
+        <span className="font-mono text-xs uppercase tracking-widest text-slate-400">
+          Verifying Identity...
+        </span>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return <Auth />;
+  }
+
   return (
     <div className="editorial-shell min-h-screen text-[color:var(--foreground)]">
       <TopBar
         healthLabel={health?.status === "ok" ? "System Healthy" : "Backend Check"}
+        userEmail={session?.user?.email}
+        onSignOut={handleSignOut}
       />
       <div className="flex pt-14">
         <SideBar />
@@ -315,12 +353,20 @@ export default function Home() {
   );
 }
 
-function TopBar({ healthLabel }: { healthLabel: string }) {
+function TopBar({
+  healthLabel,
+  userEmail,
+  onSignOut,
+}: {
+  healthLabel: string;
+  userEmail?: string;
+  onSignOut: () => void;
+}) {
   return (
     <header className="glass-panel fixed inset-x-0 top-0 z-50 flex h-14 items-center justify-between px-4 md:px-6">
       <div className="flex items-center gap-6">
         <span className="font-serif text-xl italic text-[color:var(--primary)]">
-          Artha Intelligence
+          ET GENAI
         </span>
         <nav className="hidden items-center gap-6 text-sm text-slate-500 md:flex">
           <span className="border-b-2 border-[color:var(--primary)] pb-4 pt-4 font-semibold text-[color:var(--primary)]">
@@ -331,10 +377,28 @@ function TopBar({ healthLabel }: { healthLabel: string }) {
           <span>History</span>
         </nav>
       </div>
-      <div className="flex items-center gap-3">
-        <div className="rounded-full bg-[color:var(--surface-low)] px-3 py-1 text-[10px] uppercase tracking-[0.22em] text-slate-600">
-          <span className="mr-2 inline-block h-2 w-2 rounded-full bg-emerald-500" />
-          {healthLabel}
+      <div className="flex items-center gap-6">
+        {userEmail && (
+          <div className="hidden items-center gap-4 border-r border-slate-200 pr-6 md:flex">
+            <span className="font-mono text-[10px] uppercase tracking-widest text-slate-400">
+              Authenticated:
+            </span>
+            <span className="text-sm font-semibold text-slate-700">
+              {userEmail}
+            </span>
+          </div>
+        )}
+        <div className="flex items-center gap-3">
+          <div className="rounded-full bg-[color:var(--surface-low)] px-3 py-1 text-[10px] uppercase tracking-[0.22em] text-slate-600">
+            <span className="mr-2 inline-block h-2 w-2 rounded-full bg-emerald-500" />
+            {healthLabel}
+          </div>
+          <button
+            onClick={onSignOut}
+            className="rounded-xl px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
+          >
+            Sign Out
+          </button>
         </div>
       </div>
     </header>
@@ -393,7 +457,7 @@ function LandingScreen({
   error: string | null;
   health: HealthResponse | null;
   isBootstrapping: boolean;
-  portfolio: DemoUserPortfolio;
+  portfolio: UserPortfolio;
   riskProfile: RiskProfile;
   setRiskProfile: (value: RiskProfile) => void;
   setSymbol: (value: string) => void;

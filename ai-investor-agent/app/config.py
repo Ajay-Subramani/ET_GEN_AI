@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     supabase_url: str | None = None
     supabase_key: str | None = None
     supabase_db_url: str | None = None
-    default_user_id: str = "demo_moderate"
+    default_user_id: str = "user_default"
     default_symbol: str = "TATASTEEL"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")

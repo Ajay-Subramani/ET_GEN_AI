@@ -23,14 +23,14 @@ class HistoricalContext(BaseModel):
     similar_setups: int = 0
     success_rate: float = 0.5
     avg_return_pct: float = 0.0
-    source: str = "demo"
+    source: str = "none"
 
 
 class SectorContext(BaseModel):
     trend: Literal["bullish", "neutral", "bearish"] = "neutral"
     strength: float = 0.5
     proxy: str | None = None
-    source: str = "demo"
+    source: str = "none"
 
 
 class MarketContext(BaseModel):
@@ -38,7 +38,7 @@ class MarketContext(BaseModel):
     condition: Literal["risk_on", "neutral", "risk_off"] = "neutral"
     nifty_trend: str = "sideways"
     volatility_regime: str = "normal"
-    source: str = "demo"
+    source: str = "none"
 
 
 class EnrichedContext(BaseModel):
@@ -78,7 +78,7 @@ class SetupMemory(BaseModel):
     exact_matches: int = 0
     success_rate: float = 0.5
     avg_return_pct: float = 0.0
-    source: str = "demo"
+    source: str = "none"
 
     @property
     def narrative(self) -> str:

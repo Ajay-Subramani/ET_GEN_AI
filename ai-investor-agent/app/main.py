@@ -37,12 +37,12 @@ def health() -> dict[str, str]:
     return {"status": "ok", "env": settings.app_env}
 
 
-@app.get("/demo/users")
-def demo_users() -> dict[str, object]:
+@app.get("/api/users")
+def get_users() -> dict[str, object]:
     repo = Repository()
     return {
         "default_user_id": get_settings().default_user_id,
-        "demo_user": repo.get_user_portfolio(get_settings().default_user_id),
+        "user_portfolio": repo.get_user_portfolio(get_settings().default_user_id),
     }
 
 

@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-from app.demo_data import DEMO_BULK_DEALS, SECTOR_PROXY_MAP
+from app.constants import SECTOR_PROXY_MAP
 
 try:
     from nsepython import nse_get_bulk_deals, nse_optionchain_scrapper
@@ -35,11 +35,10 @@ class MarketDataService:
             if not history.empty:
                 history = history.rename(columns=str.lower)
                 return DataFrameResult(data=history, source="yfinance")
-        except Exception:
-            pass
+        except Exception as e:
+            logging.error(f"Failed to fetch price history for {symbol}: {e}")
 
-        history = self._build_demo_history(symbol)
-        return DataFrameResult(data=history, source="demo")
+        return DataFrameResult(data=pd.DataFrame(), source="failed")
 
     def get_sector_snapshot(self, sector: str) -> dict[str, Any]:
         proxy = SECTOR_PROXY_MAP.get(sector)
@@ -57,10 +56,10 @@ class MarketDataService:
                     "proxy": proxy,
                     "source": "yfinance",
                 }
-        except Exception:
-            pass
+        except Exception as e:
+            logging.error(f"Failed to fetch sector snapshot for {sector}: {e}")
 
-        return {"trend": "bullish", "strength": 0.68, "proxy": proxy, "source": "demo"}
+        return {"trend": "neutral", "strength": 0.0, "proxy": proxy, "source": "failed"}
 
     def get_market_breadth(self) -> dict[str, Any]:
         try:
@@ -77,15 +76,15 @@ class MarketDataService:
                     "volatility_regime": "low" if vix_value < 14 else "elevated" if vix_value > 18 else "normal",
                     "source": "yfinance",
                 }
-        except Exception:
-            pass
+        except Exception as e:
+            logging.error(f"Failed to fetch market breadth: {e}")
 
         return {
-            "breadth": 1.4,
-            "condition": "risk_on",
-            "nifty_trend": "uptrend",
-            "volatility_regime": "normal",
-            "source": "demo",
+            "breadth": 0.0,
+            "condition": "unknown",
+            "nifty_trend": "unknown",
+            "volatility_regime": "unknown",
+            "source": "failed",
         }
 
     def get_bulk_deals(self, symbol: str) -> tuple[list[dict[str, Any]], str]:
@@ -99,20 +98,19 @@ class MarketDataService:
                             float(deal.get("quantity", 0)) * float(deal.get("price", 0))
                         ) / 10_000_000
                     return filtered, "nsepython"
-            except Exception:
-                pass
+            except Exception as e:
+                logging.error(f"Failed to fetch bulk deals from nsepython: {e}")
 
-        filtered = [deal for deal in DEMO_BULK_DEALS if deal["symbol"] == symbol.upper()]
-        return filtered, "demo"
+        return [], "failed"
 
     def get_delivery_pct(self, symbol: str, history: pd.DataFrame) -> tuple[float, float, str]:
         if history.empty:
             return 0.0, 0.0, "demo"
 
         recent_turnover = history["volume"].tail(20).mean()
-        delivery_pct = 68.0 if symbol.upper() == "TATASTEEL" else 54.0
-        avg_delivery_pct = 44.0 if recent_turnover > 0 else 40.0
-        return delivery_pct, avg_delivery_pct, "demo"
+        # Delivery data is strictly NSE-specific and often requires custom scrapers or local CSVs.
+        # Returning 0.0 to signal no data in this implementation.
+        return 0.0, 0.0, "none"
 
     def get_option_chain_support(self, symbol: str, price: float) -> tuple[float | None, str]:
         if nse_optionchain_scrapper:
@@ -127,10 +125,10 @@ class MarketDataService:
                 if puts:
                     max_put = max(puts, key=lambda row: row.get("openInterest", 0))
                     return float(max_put.get("strikePrice", price)), "nsepython"
-            except Exception:
-                pass
+            except Exception as e:
+                logging.error(f"Failed to fetch option chain for {symbol}: {e}")
 
-        return round(price * 0.96, 2), "demo"
+        return None, "failed"
 
     def compute_pattern_indicators(self, history: pd.DataFrame) -> dict[str, Any]:
         if history.empty:
@@ -163,29 +161,4 @@ class MarketDataService:
 
         return indicators
 
-    def _build_demo_history(self, symbol: str) -> pd.DataFrame:
-        periods = 120
-        idx = pd.date_range(end=pd.Timestamp.today(), periods=periods, freq="B")
-        base = 120.0 if symbol.upper() == "TATASTEEL" else 100.0
-        trend = np.linspace(base, base * 1.12, periods)
-        seasonal = np.sin(np.linspace(0, 8, periods)) * 2.5
-        close = trend + seasonal
-        if symbol.upper() == "TATASTEEL":
-            close[-3:] = [129.4, 131.6, 132.5]
-        open_ = close - 0.8
-        high = close + 1.4
-        low = close - 1.6
-        volume = np.linspace(6_000_000, 8_000_000, periods)
-        if symbol.upper() == "TATASTEEL":
-            volume[-1] = float(volume[-20:].mean() * 3.2)
 
-        return pd.DataFrame(
-            {
-                "open": open_,
-                "high": high,
-                "low": low,
-                "close": close,
-                "volume": volume,
-            },
-            index=idx,
-        )
