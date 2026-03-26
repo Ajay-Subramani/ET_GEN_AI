@@ -91,7 +91,10 @@ async function fetchJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> 
   return data;
 }
 
+export type TabId = "Terminal" | "Signals" | "Portfolio" | "Memory";
+
 export default function Home() {
+  const [activeTab, setActiveTab] = useState<TabId>("Terminal");
   const [riskProfile, setRiskProfile] = useState<RiskProfile>("moderate");
   const [symbol, setSymbol] = useState("TATASTEEL");
   const [health, setHealth] = useState<HealthResponse | null>(null);
@@ -171,7 +174,7 @@ export default function Home() {
     return portfolio.total_capital;
   }, [portfolio.total_capital, recommendation]);
 
-  const handleAnalyze = () => {
+  const handleAnalyze = (targetSymbol = symbol) => {
     setError(null);
     setRecommendation(null);
     setShowOutcomeModal(false);
@@ -180,7 +183,7 @@ export default function Home() {
       void fetchJson<RecommendationResponse>("/api/analyze", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ symbol, user_id: effectiveUserId }),
+        body: JSON.stringify({ symbol: targetSymbol, user_id: effectiveUserId }),
       })
         .then((response) => {
           setRecommendation(response);
@@ -196,6 +199,12 @@ export default function Home() {
           setError(message);
         });
     });
+  };
+
+  const deployAgentFromRadar = (targetSymbol: string) => {
+    setSymbol(targetSymbol);
+    setActiveTab("Terminal");
+    handleAnalyze(targetSymbol);
   };
 
   const handleOutcomeSubmit = () => {
@@ -289,12 +298,27 @@ export default function Home() {
   return (
     <div className="editorial-shell min-h-screen text-[color:var(--foreground)]">
       <TopBar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
         healthLabel={health?.status === "ok" ? "System Healthy" : "Backend Check"}
         userEmail={session?.user?.email}
         onSignOut={handleSignOut}
+        onResetTerminal={() => {
+          setRecommendation(null);
+          setError(null);
+          setActiveTab("Terminal");
+        }}
       />
       <div className="flex pt-14">
-        <SideBar />
+        <SideBar 
+          activeTab={activeTab} 
+          setActiveTab={setActiveTab} 
+          onResetTerminal={() => {
+            setRecommendation(null);
+            setError(null);
+            setActiveTab("Terminal");
+          }}
+        />
         <main className="min-h-[calc(100vh-56px)] flex-1 md:ml-64">
           {error && (recommendation || isAnalyzing) ? (
             <div className="mx-6 mt-6 rounded-2xl bg-[rgba(127,29,29,0.08)] px-5 py-4 text-sm text-[color:var(--danger)] md:mx-8">
@@ -302,34 +326,48 @@ export default function Home() {
             </div>
           ) : null}
 
-          {isAnalyzing ? (
-            <LoadingState symbol={symbol} riskProfile={riskProfile} />
-          ) : recommendation ? (
-            <ResultsScreen
-              inferredCapital={inferredCapital}
-              latestComputedAt={latestComputedAt}
-              recommendation={recommendation}
-              riskProfile={riskProfile}
-              styles={activeStyles}
-              onOpenOutcomeModal={() => setShowOutcomeModal(true)}
-              onStartOver={() => {
-                setRecommendation(null);
-                setError(null);
-              }}
-            />
-          ) : (
-            <LandingScreen
-              error={error}
-              health={health}
-              isBootstrapping={isBootstrapping}
-              portfolio={portfolio}
-              riskProfile={riskProfile}
-              setRiskProfile={setRiskProfile}
-              setSymbol={setSymbol}
-              supportingStats={supportingStats}
-              symbol={symbol}
-              onAnalyze={handleAnalyze}
-            />
+          {activeTab === "Signals" && (
+            <SignalsRadarScreen onDeployAgent={deployAgentFromRadar} />
+          )}
+
+          {activeTab === "Portfolio" && (
+            <PortfolioScreen portfolio={portfolio} />
+          )}
+
+          {activeTab === "Memory" && (
+            <MemoryScreen />
+          )}
+
+          {activeTab === "Terminal" && (
+            isAnalyzing ? (
+              <LoadingState symbol={symbol} riskProfile={riskProfile} />
+            ) : recommendation ? (
+              <ResultsScreen
+                inferredCapital={inferredCapital}
+                latestComputedAt={latestComputedAt}
+                recommendation={recommendation}
+                riskProfile={riskProfile}
+                styles={activeStyles}
+                onOpenOutcomeModal={() => setShowOutcomeModal(true)}
+                onStartOver={() => {
+                  setRecommendation(null);
+                  setError(null);
+                }}
+              />
+            ) : (
+              <LandingScreen
+                error={error}
+                health={health}
+                isBootstrapping={isBootstrapping}
+                portfolio={portfolio}
+                riskProfile={riskProfile}
+                setRiskProfile={setRiskProfile}
+                setSymbol={setSymbol}
+                supportingStats={supportingStats}
+                symbol={symbol}
+                onAnalyze={() => handleAnalyze(symbol)}
+              />
+            )
           )}
         </main>
       </div>
@@ -354,27 +392,45 @@ export default function Home() {
 }
 
 function TopBar({
+  activeTab,
+  setActiveTab,
   healthLabel,
   userEmail,
   onSignOut,
+  onResetTerminal,
 }: {
+  activeTab: TabId;
+  setActiveTab: (val: TabId) => void;
   healthLabel: string;
   userEmail?: string;
   onSignOut: () => void;
+  onResetTerminal: () => void;
 }) {
+  const navItems: { label: string; id: TabId }[] = [
+    { label: "Portfolio", id: "Portfolio" },
+    { label: "Opportunity Radar", id: "Signals" },
+  ];
+
   return (
-    <header className="glass-panel fixed inset-x-0 top-0 z-50 flex h-14 items-center justify-between px-4 md:px-6">
+    <header className="glass-panel fixed inset-x-0 top-0 z-50 flex h-14 items-center justify-between px-4 md:px-6 border-b border-slate-200/50">
       <div className="flex items-center gap-6">
-        <span className="font-serif text-xl italic text-[color:var(--primary)]">
+        <span className="font-serif text-xl italic text-[color:var(--primary)] cursor-pointer" onClick={onResetTerminal}>
           ET GENAI
         </span>
         <nav className="hidden items-center gap-6 text-sm text-slate-500 md:flex">
-          <span className="border-b-2 border-[color:var(--primary)] pb-4 pt-4 font-semibold text-[color:var(--primary)]">
-            Portfolio
-          </span>
-          <span>Insights</span>
-          <span>Signals</span>
-          <span>History</span>
+          {navItems.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => setActiveTab(item.id)}
+              className={
+                activeTab === item.id
+                  ? "border-b-2 border-[color:var(--primary)] pb-[17px] pt-[17px] font-semibold text-[color:var(--primary)] transition-all"
+                  : "pb-[17px] pt-[17px] hover:text-slate-800 transition-colors"
+              }
+            >
+              {item.label}
+            </button>
+          ))}
         </nav>
       </div>
       <div className="flex items-center gap-6">
@@ -405,40 +461,310 @@ function TopBar({
   );
 }
 
-function SideBar() {
-  const items = ["Terminal", "Strategy", "Memory", "Analysis", "Settings"];
+function SideBar({ 
+  activeTab, 
+  setActiveTab,
+  onResetTerminal
+}: { 
+  activeTab: TabId; 
+  setActiveTab: (val: TabId) => void;
+  onResetTerminal: () => void;
+}) {
+  const items: { label: string; id: TabId }[] = [
+    { label: "Terminal", id: "Terminal" },
+    { label: "Memory Log", id: "Memory" },
+  ];
 
   return (
-    <aside className="fixed left-0 top-14 hidden h-[calc(100vh-56px)] w-64 flex-col bg-[color:var(--surface-low)] px-4 py-6 md:flex">
-      <div className="mb-8 px-2">
+    <aside className="fixed left-0 top-14 hidden h-[calc(100vh-56px)] w-64 flex-col bg-[color:var(--surface-low)] px-4 py-8 md:flex border-r border-slate-200/50">
+      <div className="mb-10 px-2">
         <div className="mb-1 flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[color:var(--primary)] text-white">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg primary-gradient text-white shadow-sm">
             AI
           </div>
-          <span className="font-serif text-lg font-bold">v2.4.0-Alpha</span>
+          <span className="font-serif text-lg font-bold">v2.5.0-Alpha</span>
         </div>
-        <p className="pl-12 text-[11px] uppercase tracking-[0.24em] text-slate-400">
+        <p className="pl-12 text-[10px] uppercase tracking-[0.24em] text-slate-400 font-semibold">
           Institutional Grade
         </p>
       </div>
-      <nav className="flex-1 space-y-1">
+      <nav className="flex-1 space-y-2">
+        <div className="mb-4 px-3 text-[10px] uppercase tracking-[0.24em] text-slate-400 font-bold">
+          Core Engines
+        </div>
         {items.map((item) => (
-          <div
+          <button
+            onClick={() => {
+              if (item.id === "Terminal") {
+                onResetTerminal();
+              } else {
+                setActiveTab(item.id);
+              }
+            }}
             className={
-              item === "Terminal"
-                ? "rounded-l-xl bg-white px-4 py-3 text-sm font-semibold text-[color:var(--primary)]"
-                : "px-4 py-3 text-sm text-slate-600"
+              activeTab === item.id
+                ? "w-full text-left rounded-xl bg-white px-4 py-3 text-sm font-bold text-[color:var(--primary)] editorial-shadow transition-all"
+                : "w-full text-left px-4 py-3 text-sm font-medium text-slate-500 hover:text-slate-800 hover:bg-slate-200/50 rounded-xl transition-all"
             }
-            key={item}
+            key={item.id}
           >
-            {item}
-          </div>
+            {item.label}
+          </button>
         ))}
       </nav>
-      <button className="primary-gradient editorial-shadow rounded-xl px-4 py-3 text-sm font-semibold text-white">
+      <button 
+        onClick={onResetTerminal}
+        className="primary-gradient editorial-shadow rounded-xl px-4 py-3.5 text-sm font-bold text-white uppercase tracking-wider transition-transform hover:-translate-y-0.5"
+      >
         New Analysis
       </button>
     </aside>
+  );
+}
+
+function SignalsRadarScreen({ onDeployAgent }: { onDeployAgent: (symbol: string) => void }) {
+  const signals = [
+    { 
+      symbol: "TATASTEEL", 
+      type: "Volume Breakout", 
+      time: "2m ago", 
+      confidence: 88, 
+      color: "var(--primary)",
+      description: "Delivery volume spiked 400% above 20-day average. Institutional accumulation pattern detected ahead of macro cycle shift." 
+    },
+    { 
+      symbol: "INFY", 
+      type: "Options Activity", 
+      time: "14m ago", 
+      confidence: 72, 
+      color: "var(--warning)",
+      description: "Aggressive put writing at current strike indicating strong structural floor. Correlates with historical multi-month bottoms." 
+    },
+    { 
+      symbol: "PAYTM", 
+      type: "Regulatory Catalyst", 
+      time: "1h ago", 
+      confidence: 64, 
+      color: "var(--danger)",
+      description: "High-frequency NLP engine detected positive shift in compliance verbiage from exchange filing. Watch for trend reversal confirmation." 
+    }
+  ];
+
+  return (
+    <div className="mx-auto max-w-[1000px] px-6 py-12">
+      <div className="mb-10">
+        <h1 className="font-serif text-4xl mb-3">Opportunity Radar</h1>
+        <p className="text-slate-500 max-w-2xl leading-relaxed">
+          The AI continuously monitors corporate filings, option chains, and delivery volumes across the NSE. Anomalies are surfaced below as unverified signals. Deploy the agentic pipeline to autonomously synthesize a trading plan.
+        </p>
+      </div>
+
+      <div className="space-y-6">
+        {signals.map((signal, i) => (
+          <div key={i} className="bg-white rounded-[20px] p-6 editorial-shadow border border-slate-100 flex flex-col md:flex-row gap-6 md:items-center justify-between group hover:border-[color:var(--primary)]/30 transition-colors">
+            <div className="flex-1">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="font-mono text-xl font-bold bg-slate-50 px-2 py-1 rounded">{signal.symbol}</span>
+                <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold bg-slate-100 px-3 py-1 rounded-full">{signal.type}</span>
+                <span className="text-[10px] uppercase tracking-[0.2em] font-mono text-slate-400">{signal.time}</span>
+              </div>
+              <p className="text-sm text-slate-600 leading-relaxed pr-4">
+                {signal.description}
+              </p>
+            </div>
+            
+            <div className="flex flex-row md:flex-col items-center md:items-end gap-3 md:gap-4 md:pl-6 md:border-l border-slate-100">
+               <div className="flex flex-col items-start md:items-end">
+                 <span className="text-[10px] uppercase tracking-[0.2em] text-slate-400 mb-1">Signal Strength</span>
+                 <div className="flex items-center gap-2">
+                   <div className="h-2 w-16 bg-slate-100 rounded-full overflow-hidden">
+                     <div className="h-full rounded-full" style={{ width: `${signal.confidence}%`, backgroundColor: signal.color }} />
+                   </div>
+                   <span className="font-mono text-sm font-bold" style={{ color: signal.color }}>{signal.confidence}%</span>
+                 </div>
+               </div>
+               <button 
+                onClick={() => onDeployAgent(signal.symbol)}
+                className="ml-auto md:ml-0 bg-[color:var(--surface-low)] hover:bg-[color:var(--primary)] hover:text-white transition-all text-[color:var(--primary)] font-semibold text-xs uppercase tracking-widest px-6 py-3 rounded-xl border border-[color:var(--primary)]/10 hover:border-[color:var(--primary)]"
+               >
+                 Deploy Agent →
+               </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PortfolioScreen({ portfolio }: { portfolio: UserPortfolio }) {
+  const holdings = portfolio.holdings || [];
+  
+  return (
+    <div className="mx-auto max-w-[1000px] px-6 py-12">
+      <div className="mb-10 flex items-end justify-between">
+        <div>
+          <h1 className="font-serif text-4xl mb-3">Institutional Portfolio</h1>
+          <p className="text-slate-500 max-w-2xl leading-relaxed">
+            Personalized context used by the AI Agent for trade sizing and risk management. High-conviction signals are scaled based on your current sector exposure and liquidity.
+          </p>
+        </div>
+        <div className="text-right pb-1">
+          <span className="text-[10px] uppercase tracking-[0.22em] text-slate-400 font-bold block mb-1">Total Liquidity</span>
+          <span className="font-mono text-3xl font-bold">{formatCurrency(portfolio.total_capital)}</span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
+        <section className="bg-white rounded-[20px] p-8 border border-slate-100 editorial-shadow">
+          <h3 className="text-xs uppercase tracking-widest text-slate-400 font-bold mb-6">Risk Profile</h3>
+          <div className="flex items-center gap-4">
+             <div className="primary-gradient w-12 h-12 rounded-xl flex items-center justify-center text-white font-bold">M</div>
+             <div>
+               <p className="font-serif text-xl font-bold">Moderate-Aggressive</p>
+               <p className="text-xs text-slate-500">Max Drwdown Target: 12%</p>
+             </div>
+          </div>
+        </section>
+        
+        <section className="bg-white rounded-[20px] p-8 border border-slate-100 editorial-shadow md:col-span-2 flex items-center justify-between">
+           <div className="flex-1 border-r border-slate-100 pr-8">
+             <h3 className="text-xs uppercase tracking-widest text-slate-400 font-bold mb-4">Capital Utilization</h3>
+             <div className="h-3 bg-slate-100 rounded-full overflow-hidden mb-2">
+               <div className="h-full bg-[color:var(--primary)]" style={{ width: '42%' }} />
+             </div>
+             <p className="text-xs text-slate-500">42% Deployed · 58% Reserve Liquidity</p>
+           </div>
+           <div className="pl-8">
+             <h3 className="text-xs uppercase tracking-widest text-slate-400 font-bold mb-2">Active Nodes</h3>
+             <p className="font-mono text-2xl font-bold text-emerald-500">08/08</p>
+             <p className="text-[10px] text-slate-400 uppercase tracking-widest">Healthy</p>
+           </div>
+        </section>
+      </div>
+
+      <section className="bg-white rounded-[24px] overflow-hidden border border-slate-100 editorial-shadow">
+        <div className="bg-slate-50/50 px-8 py-4 border-b border-slate-100 flex items-center justify-between">
+          <h2 className="font-serif text-xl font-bold">Current Holdings</h2>
+          <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">Real-time valuation provided by YFinance</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="border-b border-slate-50">
+                <th className="px-8 py-5 text-[10px] uppercase tracking-widest text-slate-400 font-bold">Asset</th>
+                <th className="px-8 py-5 text-[10px] uppercase tracking-widest text-slate-400 font-bold">Quantity</th>
+                <th className="px-8 py-5 text-[10px] uppercase tracking-widest text-slate-400 font-bold text-right">Value</th>
+                <th className="px-8 py-5 text-[10px] uppercase tracking-widest text-slate-400 font-bold text-right">Avg Price</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {holdings.length > 0 ? holdings.map((asset: any, i: number) => (
+                <tr key={i} className="group hover:bg-slate-50/50 transition-colors">
+                  <td className="px-8 py-6">
+                    <div className="font-mono text-lg font-bold">{asset.symbol}</div>
+                    <div className="text-xs text-slate-400 font-mono uppercase">SECTOR: {asset.sector || 'GENERAL'}</div>
+                  </td>
+                  <td className="px-8 py-6">
+                    <div className="font-mono text-sm">{asset.quantity} units</div>
+                  </td>
+                  <td className="px-8 py-6 text-right font-mono font-bold">
+                    {formatCurrency(asset.quantity * asset.avg_price)}
+                  </td>
+                  <td className="px-8 py-6 text-right font-mono text-slate-500">
+                    {formatCurrency(asset.avg_price)}
+                  </td>
+                </tr>
+              )) : (
+                <tr>
+                  <td colSpan={4} className="px-8 py-12 text-center text-slate-400 italic">
+                    No active holdings detected in institutional vault.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function MemoryScreen() {
+  const history = [
+    { symbol: "RELIANCE", pattern: "Mean Reversion", date: "2 days ago", outcome: "WIN", return: 4.2, status: "Verified" },
+    { symbol: "ZOMATO", pattern: "Volume Breakout", date: "5 days ago", outcome: "WIN", return: 8.7, status: "Verified" },
+    { symbol: "WIPRO", pattern: "Structural Alignment", date: "1 week ago", outcome: "LOSS", return: -2.1, status: "Verified" },
+    { symbol: "HDFCBANK", pattern: "Options Floor", date: "10 days ago", outcome: "WIN", return: 3.5, status: "Verified" },
+  ];
+
+  return (
+    <div className="mx-auto max-w-[1000px] px-6 py-12">
+       <div className="mb-10">
+        <h1 className="font-serif text-4xl mb-3">Model Memory Log</h1>
+        <p className="text-slate-500 max-w-2xl leading-relaxed">
+          Historical breakdown of every autonomous decision made by the AI. This data is fed back into the <span className="text-[color:var(--primary)] font-bold italic">pattern_memory</span> module to refine future confidence scores.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10">
+         <div className="bg-white p-6 rounded-[20px] border border-slate-100 editorial-shadow">
+            <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-2">Hit Rate</p>
+            <p className="font-mono text-3xl font-bold text-[color:var(--primary)]">75.0%</p>
+         </div>
+         <div className="bg-white p-6 rounded-[20px] border border-slate-100 editorial-shadow">
+            <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-2">Avg. Return</p>
+            <p className="font-mono text-3xl font-bold text-emerald-500">+3.58%</p>
+         </div>
+         <div className="bg-white p-6 rounded-[20px] border border-slate-100 editorial-shadow">
+            <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-2">Trades Analyzed</p>
+            <p className="font-mono text-3xl font-bold">142</p>
+         </div>
+         <div className="bg-white p-6 rounded-[20px] border border-slate-100 editorial-shadow">
+            <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-2">Active Signals</p>
+            <p className="font-mono text-3xl font-bold text-amber-500">03</p>
+         </div>
+      </div>
+
+      <div className="bg-white rounded-[24px] overflow-hidden border border-slate-100 editorial-shadow">
+         <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="border-b border-slate-50">
+                <th className="px-8 py-5 text-[10px] uppercase tracking-widest text-slate-400 font-bold">Symbol</th>
+                <th className="px-8 py-5 text-[10px] uppercase tracking-widest text-slate-400 font-bold">Pattern Alignment</th>
+                <th className="px-8 py-5 text-[10px] uppercase tracking-widest text-slate-400 font-bold">Date</th>
+                <th className="px-8 py-5 text-[10px] uppercase tracking-widest text-slate-400 font-bold">Outcome</th>
+                <th className="px-8 py-5 text-[10px] uppercase tracking-widest text-slate-400 font-bold text-right">Realized Return</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {history.map((record, i) => (
+                <tr key={i} className="hover:bg-slate-50/50 transition-colors">
+                  <td className="px-8 py-6">
+                    <div className="font-mono font-bold">{record.symbol}</div>
+                  </td>
+                  <td className="px-8 py-6">
+                    <div className="text-sm font-medium text-slate-700">{record.pattern}</div>
+                  </td>
+                  <td className="px-8 py-6">
+                    <div className="text-xs text-slate-500 font-mono uppercase">{record.date}</div>
+                  </td>
+                  <td className="px-8 py-6">
+                    <span className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1 rounded-full ${record.outcome === 'WIN' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
+                      {record.outcome}
+                    </span>
+                  </td>
+                  <td className={`px-8 py-6 text-right font-mono font-bold ${record.return > 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                    {record.return > 0 ? '+' : ''}{record.return}%
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   );
 }
 
