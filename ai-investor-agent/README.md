@@ -133,8 +133,10 @@ The pipeline is fully autonomous and sequential using LangGraph:
 Implemented in `app/main.py`.
 
 - `GET /health`
-- `GET /demo/users`
-- `GET /memory/{symbol}` (query by `pattern_name` and optional `market_condition`)
+- `GET /api/users`
+- `GET /signals`
+- `GET /symbols/{symbol}/technicals`
+- `GET /memory/{symbol}` (query by `pattern_name`, `market_condition`, and `signal_stack`)
 - `POST /analyze` (symbol + user_id -> full recommendation + `summary`)
 - `POST /outcomes` (record realized trade outcome and return updated memory snapshot)
 

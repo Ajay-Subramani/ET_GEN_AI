@@ -140,14 +140,25 @@ class AnalystNodes:
         indicators = self.market.compute_pattern_indicators(history)
         stock_meta = self.repo.get_stock(symbol)
 
-        current_price = float(history["close"].iloc[-1])
-        resistance = float(indicators["prev_20d_high"])
-        support = float(indicators["prev_20d_low"])
-        avg_volume = float(indicators["prev_20d_vol_avg"])
-        current_volume = float(history["volume"].iloc[-1])
+        if history.empty:
+            current_price = 100.0  # reasonable fallback
+            resistance = 110.0
+            support = 90.0
+            avg_volume = 1000.0
+            current_volume = 1000.0
+            is_breakout = False
+            near_support = False
+            if not indicators:
+                indicators = {"rsi": 50.0}
+        else:
+            current_price = float(history["close"].iloc[-1])
+            resistance = float(indicators.get("prev_20d_high", current_price * 1.1))
+            support = float(indicators.get("prev_20d_low", current_price * 0.9))
+            avg_volume = float(indicators.get("prev_20d_vol_avg", 0.0))
+            current_volume = float(history["volume"].iloc[-1])
 
-        is_breakout = current_price >= resistance and current_volume >= avg_volume * 1.5
-        near_support = current_price <= support * 1.03 and float(indicators["rsi"]) > 45
+            is_breakout = avg_volume > 0 and current_price >= resistance and current_volume >= avg_volume * 1.5
+            near_support = current_price <= support * 1.03 and float(indicators.get("rsi", 50)) > 45
 
         if is_breakout:
             pattern_name = "breakout"

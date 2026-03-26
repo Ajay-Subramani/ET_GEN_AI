@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -81,7 +82,7 @@ class MarketDataService:
 
         return {
             "breadth": 0.0,
-            "condition": "unknown",
+            "condition": "neutral",
             "nifty_trend": "unknown",
             "volatility_regime": "unknown",
             "source": "failed",

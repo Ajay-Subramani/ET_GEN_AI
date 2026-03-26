@@ -523,63 +523,53 @@ function SideBar({
 }
 
 function SignalsRadarScreen({ onDeployAgent }: { onDeployAgent: (symbol: string) => void }) {
-  const signals = [
-    { 
-      symbol: "TATASTEEL", 
-      layer: "Layer 4",
-      type: "Management Commentary", 
-      time: "2m ago", 
-      confidence: 88, 
-      color: "var(--primary)",
-      description: "NLP sentiment analysis on Q3 earnings call transcript. Detected high-conviction semantic shift: management swapped 'expansion' for 'consolidation' and 'right-sizing', an early indicator of margin defense." 
-    },
-    { 
-      symbol: "INFY", 
-      layer: "Layer 3",
-      type: "Insider Cluster", 
-      time: "14m ago", 
-      confidence: 82, 
-      color: "var(--success)",
-      description: "Multiple Form C/D filings detected on SEBI disclosure portal. Promoter buying cluster (3 insiders) over a 2-week window during prolonged stock underperformance." 
-    },
-    { 
-      symbol: "RELIANCE", 
-      layer: "Layer 2",
-      type: "Technical Pattern", 
-      time: "1h ago", 
-      confidence: 76, 
-      color: "var(--warning)",
-      description: "52-week breakout detected with 300% volume confirmation. Price has reclaimed the 20/50 EMA supply zone with positive RSI divergence on the daily timeframe." 
-    },
-    { 
-      symbol: "ZOMATO", 
-      layer: "Layer 1",
-      type: "XBRL Filing", 
-      time: "3h ago", 
-      confidence: 68, 
-      color: "var(--danger)",
-      description: "XBRL-structured quarterly results show significant revenue surprise (+14%) against consensus estimates. Real-time NSE/BSE exchange filing processed under LODR regulations." 
-    }
-  ];
+  const [signals, setSignals] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    fetchJson<any[]>("/api/signals")
+      .then((data) => {
+        setSignals(
+          data.map((s) => ({
+            ...s,
+            color:
+              s.confidence_pct >= 80
+                ? "var(--success)"
+                : s.confidence_pct >= 70
+                  ? "var(--primary)"
+                  : "var(--warning)",
+            time: new Date(s.detected_at).toLocaleTimeString("en-US", {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+          })),
+        );
+      })
+      .finally(() => setIsLoading(false));
+  }, []);
 
   return (
     <div className="mx-auto max-w-[1000px] px-6 py-12">
       <div className="mb-10">
         <h1 className="font-serif text-4xl mb-3">Opportunity Radar</h1>
         <p className="text-slate-500 max-w-2xl leading-relaxed">
-          The AI continuously monitors 4 distinct signal layers across the NSE: Corporate Filings, Technical Patterns, Insider Flows, and Management Commentary NLP. Anomalies are surfaced below. Deploy the agentic pipeline to autonomously synthesize a trading plan.
+          The AI scans supported technical and market signals (e.g., volume breakouts, pattern starts) across the NSE. Anomalies are surfaced below. Deploy the agentic pipeline to autonomously synthesize a trading plan.
         </p>
       </div>
 
-      <div className="space-y-6">
-        {signals.map((signal, i) => (
-          <div key={i} className="bg-white rounded-[20px] p-6 editorial-shadow border border-slate-100 flex flex-col md:flex-row gap-6 md:items-center justify-between group hover:border-[color:var(--primary)]/30 transition-colors">
+      {isLoading ? (
+        <div className="py-20 text-center text-slate-400">Scanning market for live signals...</div>
+      ) : (
+        <div className="space-y-6">
+        {signals.map((signal) => (
+          <div key={signal.id} className="bg-white rounded-[20px] p-6 editorial-shadow border border-slate-100 flex flex-col md:flex-row gap-6 md:items-center justify-between group hover:border-[color:var(--primary)]/30 transition-colors">
             <div className="flex-1">
               <div className="flex flex-wrap items-center gap-3 mb-3">
                 <span className="font-mono text-xl font-bold bg-slate-50 px-2 py-1 rounded">{signal.symbol}</span>
-                <span className="text-[10px] uppercase tracking-widest text-[color:var(--primary)] font-bold bg-[color:var(--surface-low)] px-3 py-1 rounded-full">{signal.layer}</span>
+                <span className="text-[10px] uppercase tracking-widest text-[color:var(--primary)] font-bold bg-[color:var(--surface-low)] px-3 py-1 rounded-full">{signal.category}</span>
                 <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold bg-slate-100 px-3 py-1 rounded-full">{signal.type}</span>
                 <span className="text-[10px] uppercase tracking-[0.2em] font-mono text-slate-400">{signal.time}</span>
+                <span className="text-[9px] uppercase tracking-widest text-slate-400 font-bold border border-slate-200 px-2 py-0.5 rounded ml-auto">SRC: {signal.source}</span>
               </div>
               <p className="text-sm text-slate-600 leading-relaxed pr-4">
                 {signal.description}
@@ -606,6 +596,7 @@ function SignalsRadarScreen({ onDeployAgent }: { onDeployAgent: (symbol: string)
           </div>
         ))}
       </div>
+      )}
     </div>
   );
 }
@@ -617,7 +608,10 @@ function PortfolioScreen({ portfolio }: { portfolio: UserPortfolio }) {
     <div className="mx-auto max-w-[1000px] px-6 py-12">
       <div className="mb-10 flex items-end justify-between">
         <div>
-          <h1 className="font-serif text-4xl mb-3">Institutional Portfolio</h1>
+          <div className="flex items-center gap-3 mb-3">
+            <h1 className="font-serif text-4xl">Institutional Portfolio</h1>
+            <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold bg-slate-100 px-2 py-0.5 rounded border border-slate-200">SRC: DEMO BACKED</span>
+          </div>
           <p className="text-slate-500 max-w-2xl leading-relaxed">
             Personalized context used by the AI Agent for trade sizing and risk management. High-conviction signals are scaled based on your current sector exposure and liquidity.
           </p>
@@ -704,6 +698,15 @@ function PortfolioScreen({ portfolio }: { portfolio: UserPortfolio }) {
 }
 
 function MemoryScreen() {
+  const [memory, setMemory] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    fetchJson<any>("/api/memory?symbol=TATASTEEL&pattern_name=breakout")
+      .then(setMemory)
+      .finally(() => setIsLoading(false));
+  }, []);
+
   const history = [
     { symbol: "RELIANCE", pattern: "Mean Reversion", date: "2 days ago", outcome: "WIN", return: 4.2, status: "Verified" },
     { symbol: "ZOMATO", pattern: "Volume Breakout", date: "5 days ago", outcome: "WIN", return: 8.7, status: "Verified" },
@@ -711,10 +714,17 @@ function MemoryScreen() {
     { symbol: "HDFCBANK", pattern: "Options Floor", date: "10 days ago", outcome: "WIN", return: 3.5, status: "Verified" },
   ];
 
+  if (isLoading || !memory) {
+     return <div className="py-20 text-center text-slate-400">Loading pattern memory...</div>;
+  }
+
   return (
     <div className="mx-auto max-w-[1000px] px-6 py-12">
        <div className="mb-10">
-        <h1 className="font-serif text-4xl mb-3">Model Memory Log</h1>
+        <div className="flex items-center gap-3 mb-3">
+          <h1 className="font-serif text-4xl">Model Memory Log</h1>
+          <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold bg-slate-100 px-2 py-0.5 rounded border border-slate-200">SRC: {memory.source.toUpperCase()} BACKED</span>
+        </div>
         <p className="text-slate-500 max-w-2xl leading-relaxed">
           Historical breakdown of every autonomous decision made by the AI. This data is fed back into the <span className="text-[color:var(--primary)] font-bold italic">pattern_memory</span> module to refine future confidence scores.
         </p>
@@ -723,19 +733,19 @@ function MemoryScreen() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10">
          <div className="bg-white p-6 rounded-[20px] border border-slate-100 editorial-shadow">
             <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-2">Hit Rate</p>
-            <p className="font-mono text-3xl font-bold text-[color:var(--primary)]">75.0%</p>
+            <p className="font-mono text-3xl font-bold text-[color:var(--primary)]">{Math.round(memory.success_rate * 100)}%</p>
          </div>
          <div className="bg-white p-6 rounded-[20px] border border-slate-100 editorial-shadow">
             <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-2">Avg. Return</p>
-            <p className="font-mono text-3xl font-bold text-emerald-500">+3.58%</p>
+            <p className="font-mono text-3xl font-bold text-emerald-500">{memory.avg_return_pct > 0 ? '+' : ''}{memory.avg_return_pct}%</p>
          </div>
          <div className="bg-white p-6 rounded-[20px] border border-slate-100 editorial-shadow">
             <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-2">Trades Analyzed</p>
-            <p className="font-mono text-3xl font-bold">142</p>
+            <p className="font-mono text-3xl font-bold">{memory.similar_setups}</p>
          </div>
          <div className="bg-white p-6 rounded-[20px] border border-slate-100 editorial-shadow">
-            <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-2">Active Signals</p>
-            <p className="font-mono text-3xl font-bold text-amber-500">03</p>
+            <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-2">Exact Matches</p>
+            <p className="font-mono text-3xl font-bold text-amber-500">{memory.exact_matches}</p>
          </div>
       </div>
 
@@ -1088,6 +1098,12 @@ function ResultsScreen({
             <span className="text-slate-500">Risk:</span>
             <span className="rounded-full bg-[rgba(146,64,14,0.1)] px-3 py-1 text-xs font-bold uppercase tracking-[0.2em] text-[color:var(--warning)]">
               {riskProfile}
+            </span>
+          </div>
+          <span className="text-slate-300">|</span>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] uppercase tracking-widest text-slate-600 font-bold bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+              SRC: {recommendation.sources.market.toUpperCase()}
             </span>
           </div>
         </div>

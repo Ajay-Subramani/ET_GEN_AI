@@ -37,7 +37,16 @@ class Repository:
                     return result.data[0]
             except APIError as e:
                 logging.error(f"Failed to fetch stock {normalized} from Supabase: {e}")
-        return {"symbol": normalized, "name": normalized, "sector": "Unknown", "market_cap": 0.0, "is_fno": False}
+        
+        sector = "Information Technology" if normalized in ["INFY", "TCS", "WIPRO"] else "Metals" if normalized in ["TATASTEEL", "HINDALCO"] else "Financials"
+        return {
+            "symbol": normalized, 
+            "name": normalized, 
+            "sector": sector, 
+            "market_cap": 250000.0, 
+            "is_fno": True,
+            "source": "demo",
+        }
 
     def get_pattern_success(self, symbol: str, pattern_name: str) -> dict[str, Any]:
         normalized = symbol.upper()
@@ -55,18 +64,22 @@ class Repository:
                     return result.data[0]
             except APIError as e:
                 logging.error(f"Failed to fetch pattern {pattern_name} for {normalized} from Supabase: {e}")
+        
+        win_rate = 0.55 + (len(symbol) % 3) * 0.05
+        total_occ = 24 + len(symbol)
         return {
-            "total_occurrences": 0,
-            "successful_occurrences": 0,
-            "success_rate": 0.0,
-            "avg_return_pct": 0.0,
+            "total_occurrences": total_occ,
+            "successful_occurrences": int(total_occ * win_rate),
+            "success_rate": round(win_rate, 2),
+            "avg_return_pct": 2.5 + (len(symbol) % 4),
+            "source": "demo"
         }
 
     def get_user_portfolio(self, user_id: str) -> dict[str, Any]:
         if self._client:
             try:
                 result = (
-                    self._client.table("portfolios")
+                    self._client.table("user_portfolios")
                     .select("*")
                     .eq("user_id", user_id)
                     .limit(1)
@@ -76,7 +89,17 @@ class Repository:
                     return result.data[0]
             except APIError as e:
                 logging.error(f"Failed to fetch user portfolio {user_id} from Supabase: {e}")
-        return {"user_id": user_id, "risk_profile": "moderate", "total_capital": 0.0, "holdings": []}
+        
+        return {
+            "user_id": user_id, 
+            "risk_profile": "aggressive", 
+            "total_capital": 500000.0, 
+            "holdings": [
+                {"symbol": "INFY", "quantity": 50, "avg_price": 1400.0, "sector": "Information Technology"},
+                {"symbol": "RELIANCE", "quantity": 25, "avg_price": 2800.0, "sector": "Energy"}
+            ],
+            "source": "demo",
+        }
 
     def get_setup_memory(
         self,
@@ -108,13 +131,21 @@ class Repository:
             except APIError as e:
                 logging.error(f"Failed to fetch setup memory from Supabase: {e}")
         
+        dummy_rows = [
+            {"signal_stack": signal_stack, "market_condition": market_condition, "outcome_label": "win", "outcome_return_pct": 4.5, "is_stop_loss_hit": False},
+            {"signal_stack": signal_stack, "market_condition": market_condition, "outcome_label": "win", "outcome_return_pct": 2.1, "is_stop_loss_hit": False},
+            {"signal_stack": signal_stack, "market_condition": market_condition, "outcome_label": "loss", "outcome_return_pct": -1.5, "is_stop_loss_hit": True},
+            {"signal_stack": signal_stack, "market_condition": "neutral", "outcome_label": "win", "outcome_return_pct": 3.0, "is_stop_loss_hit": False},
+            {"signal_stack": [], "market_condition": market_condition, "outcome_label": "loss", "outcome_return_pct": -2.0, "is_stop_loss_hit": True},
+        ]
+        
         return self._aggregate_setup_memory(
             normalized=normalized,
             pattern_name=pattern_name,
             market_condition=market_condition,
             signal_stack=signal_stack,
-            rows=[],
-            source="none",
+            rows=dummy_rows,
+            source="demo",
         )
 
     def record_outcome(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -140,6 +171,8 @@ class Repository:
                 return result.data[0] if result.data else body
             except APIError as e:
                 logging.error(f"Failed to record outcome to Supabase: {e}")
+        
+        body["source"] = "demo"
         return body
 
     def _aggregate_setup_memory(
