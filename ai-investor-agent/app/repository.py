@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from statistics import mean
 from typing import Any
+import logging
 
 from supabase import Client, create_client
+from postgrest.exceptions import APIError
 
 from app.config import get_settings
 from app.demo_data import (
@@ -30,15 +32,18 @@ class Repository:
     def get_stock(self, symbol: str) -> dict[str, Any]:
         normalized = symbol.upper()
         if self._client:
-            result = (
-                self._client.table("stocks")
-                .select("*")
-                .eq("symbol", normalized)
-                .limit(1)
-                .execute()
-            )
-            if result.data:
-                return result.data[0]
+            try:
+                result = (
+                    self._client.table("stocks")
+                    .select("*")
+                    .eq("symbol", normalized)
+                    .limit(1)
+                    .execute()
+                )
+                if result.data:
+                    return result.data[0]
+            except APIError as e:
+                logging.warning(f"Failed to fetch stock {normalized} from Supabase: {e}")
         return {"symbol": normalized, **DEMO_STOCKS.get(normalized, {
             "name": normalized,
             "sector": "Unknown",
@@ -49,16 +54,19 @@ class Repository:
     def get_pattern_success(self, symbol: str, pattern_name: str) -> dict[str, Any]:
         normalized = symbol.upper()
         if self._client:
-            result = (
-                self._client.table("pattern_success_rates")
-                .select("*")
-                .eq("symbol", normalized)
-                .eq("pattern_name", pattern_name)
-                .limit(1)
-                .execute()
-            )
-            if result.data:
-                return result.data[0]
+            try:
+                result = (
+                    self._client.table("pattern_success_rates")
+                    .select("*")
+                    .eq("symbol", normalized)
+                    .eq("pattern_name", pattern_name)
+                    .limit(1)
+                    .execute()
+                )
+                if result.data:
+                    return result.data[0]
+            except APIError as e:
+                logging.warning(f"Failed to fetch pattern {pattern_name} for {normalized} from Supabase: {e}")
         return DEMO_PATTERN_SUCCESS.get(
             (normalized, pattern_name),
             {
@@ -71,15 +79,18 @@ class Repository:
 
     def get_user_portfolio(self, user_id: str) -> dict[str, Any]:
         if self._client:
-            result = (
-                self._client.table("user_portfolios")
-                .select("*")
-                .eq("user_id", user_id)
-                .limit(1)
-                .execute()
-            )
-            if result.data:
-                return result.data[0]
+            try:
+                result = (
+                    self._client.table("portfolios")
+                    .select("*")
+                    .eq("user_id", user_id)
+                    .limit(1)
+                    .execute()
+                )
+                if result.data:
+                    return result.data[0]
+            except APIError as e:
+                logging.warning(f"Failed to fetch user portfolio {user_id} from Supabase: {e}")
         return {"user_id": user_id, **DEMO_USER_PORTFOLIOS.get(user_id, DEMO_USER_PORTFOLIOS["demo_moderate"])}
 
     def get_setup_memory(
@@ -91,23 +102,26 @@ class Repository:
     ) -> SetupMemory:
         normalized = symbol.upper()
         if self._client:
-            result = (
-                self._client.table("recommendation_outcomes")
-                .select("*")
-                .eq("symbol", normalized)
-                .eq("pattern_name", pattern_name)
-                .execute()
-            )
-            rows = result.data or []
-            if rows:
-                return self._aggregate_setup_memory(
-                    normalized=normalized,
-                    pattern_name=pattern_name,
-                    market_condition=market_condition,
-                    signal_stack=signal_stack,
-                    rows=rows,
-                    source="supabase",
+            try:
+                result = (
+                    self._client.table("recommendation_outcomes")
+                    .select("*")
+                    .eq("symbol", normalized)
+                    .eq("pattern_name", pattern_name)
+                    .execute()
                 )
+                rows = result.data or []
+                if rows:
+                    return self._aggregate_setup_memory(
+                        normalized=normalized,
+                        pattern_name=pattern_name,
+                        market_condition=market_condition,
+                        signal_stack=signal_stack,
+                        rows=rows,
+                        source="supabase",
+                    )
+            except APIError as e:
+                logging.warning(f"Failed to fetch setup memory from Supabase: {e}")
 
         rows = [
             row
@@ -149,8 +163,11 @@ class Repository:
             "outcome_label": payload["outcome_label"],
         }
         if self._client:
-            result = self._client.table("recommendation_outcomes").insert(body).execute()
-            return result.data[0] if result.data else body
+            try:
+                result = self._client.table("recommendation_outcomes").insert(body).execute()
+                return result.data[0] if result.data else body
+            except APIError as e:
+                logging.warning(f"Failed to record outcome to Supabase: {e}")
         DEMO_RECOMMENDATION_OUTCOMES.append(body)
         return body
 

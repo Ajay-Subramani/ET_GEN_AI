@@ -40,6 +40,7 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+ui_assets/
 
 ai-investor-agent/.venv/
 ai-investor-agent/.env
