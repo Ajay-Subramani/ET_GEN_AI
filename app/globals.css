@@ -1,26 +1,75 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f8f9fb;
+  --foreground: #191c1e;
+  --surface-low: #f3f4f6;
+  --surface-lowest: #ffffff;
+  --surface-high: #e7e8ea;
+  --outline-variant: #c3c5d7;
+  --primary: #1a56db;
+  --primary-deep: #003fb1;
+  --success: #065f46;
+  --warning: #92400e;
+  --danger: #7f1d1d;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-public-sans);
+  --font-serif: var(--font-newsreader);
+  --font-mono: var(--font-jetbrains-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--background);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-public-sans), sans-serif;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--primary) 20%, white);
+}
+
+.editorial-shell {
+  background:
+    radial-gradient(circle at top right, rgba(26, 86, 219, 0.1), transparent 26%),
+    linear-gradient(180deg, #ffffff 0%, #f8f9fb 38%, #eef2f8 100%);
+}
+
+.primary-gradient {
+  background-image: linear-gradient(135deg, var(--primary) 0%, var(--primary-deep) 100%);
+}
+
+.editorial-shadow {
+  box-shadow: 0 10px 40px rgba(25, 28, 30, 0.06);
+}
+
+.glass-panel {
+  background: rgba(248, 249, 251, 0.82);
+  backdrop-filter: blur(12px);
+}
+
+.text-balance {
+  text-wrap: balance;
 }
