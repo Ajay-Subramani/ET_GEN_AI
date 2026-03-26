@@ -208,7 +208,25 @@ class AnalystNodes:
         if technicals.pattern.detected:
             technical_score = min(1.0, technical_score + 0.05)
 
+        strong_signal_count = sum(1 for signal in signal_bundle.signals if signal.weight >= 2)
+        aligned_market = context.sector.trend == "bullish" or context.market.condition == "risk_on"
+        historical_edge = context.historical.success_rate >= 0.65
+        technical_edge = technicals.pattern.detected or technicals.pattern.risk_reward_ratio >= 2
+        if strong_signal_count >= 4 and aligned_market and historical_edge and technical_edge:
+            conviction_mode = "HIGH_CONVICTION"
+            confidence_bonus = 0.10
+            confidence_note = "Confidence is high because signals, historical edge, technical structure, and market regime all align."
+        elif strong_signal_count >= 3 and (aligned_market or historical_edge):
+            conviction_mode = "ALIGNED"
+            confidence_bonus = 0.05
+            confidence_note = "Confidence is constructive because multiple layers align, but the setup still needs confirmation."
+        else:
+            conviction_mode = "NORMAL"
+            confidence_bonus = 0.0
+            confidence_note = "Confidence is measured because the setup is only partially aligned."
+
         confidence = (signal_score * 0.4) + (context_score * 0.3) + (technical_score * 0.3)
+        confidence = min(0.99, confidence + confidence_bonus)
         confidence = round(confidence, 2)
 
         if confidence >= 0.8:
@@ -218,22 +236,50 @@ class AnalystNodes:
         else:
             action = "AVOID"
 
+        lead_signal_text = ", ".join(signal.details for signal in signal_bundle.signals[:3]) or "signal stack is weak"
         reasons = [
-            ", ".join(signal.details for signal in signal_bundle.signals[:3]) or "signal stack is weak",
+            lead_signal_text,
             (
                 f"{technicals.pattern.name} historically succeeded "
                 f"{technicals.pattern.success_rate * 100:.0f}% with avg {technicals.pattern.avg_return_pct:.1f}% return"
             ),
             f"sector trend is {context.sector.trend} and market is {context.market.condition}",
         ]
+        analyst_note = (
+            f"{signal_bundle.symbol} is showing {strong_signal_count} aligned signals: {lead_signal_text}. "
+            f"Similar {technicals.pattern.name} setups worked {context.historical.success_rate * 100:.0f}% of the time, "
+            f"with average follow-through near {context.historical.avg_return_pct:.1f}%. "
+            f"{confidence_note}"
+        )
+        confirmation_triggers = [
+            f"Breakout sustains above Rs {technicals.pattern.resistance:.2f}" if technicals.pattern.resistance else "Price confirms breakout",
+            "Volume remains above the recent 20-day average",
+            f"{context.market.condition.replace('_', ' ')} market regime stays intact",
+        ]
+        invalidation_triggers = [
+            f"Price closes below Rs {technicals.stop_loss:.2f}",
+            "Sector strength fades sharply",
+            "Volume support disappears on the next advance",
+        ]
+        watch_next = [
+            confirmation_triggers[0],
+            confirmation_triggers[1],
+            invalidation_triggers[0],
+        ]
 
         state["decision"] = Decision(
             action=action,
             confidence=confidence,
+            conviction_mode=conviction_mode,
+            confidence_note=confidence_note,
             entry_price=technicals.entry_price,
             target_price=technicals.target_price,
             stop_loss=technicals.stop_loss,
             reasoning=" + ".join(reasons),
+            analyst_note=analyst_note,
+            watch_next=watch_next,
+            confirmation_triggers=confirmation_triggers,
+            invalidation_triggers=invalidation_triggers,
         )
         return state
 
@@ -287,15 +333,21 @@ class AnalystNodes:
             user_id=user_id,
             action=decision.action,
             confidence_pct=decision.confidence * 100,
+            conviction_mode=decision.conviction_mode,
+            confidence_note=decision.confidence_note,
             entry_price=decision.entry_price,
             target_price=decision.target_price,
             stop_loss=decision.stop_loss,
             reasoning=decision.reasoning,
+            analyst_note=decision.analyst_note,
             allocation_pct=adjusted_allocation * 100,
             allocation_amount=capital * adjusted_allocation,
             sector_exposure_pct=sector_exposure_pct * 100,
             personalization_warning=warning,
             next_step=next_step,
+            watch_next=decision.watch_next,
+            confirmation_triggers=decision.confirmation_triggers,
+            invalidation_triggers=decision.invalidation_triggers,
             sources={
                 "signals": [signal.source for signal in state["signal_bundle"].signals],
                 "historical": state["context"].historical.source,

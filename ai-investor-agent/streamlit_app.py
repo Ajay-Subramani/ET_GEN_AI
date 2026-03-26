@@ -42,17 +42,34 @@ with right:
 
         metric_cols = st.columns(3)
         metric_cols[0].metric("Stop Loss", f"Rs {recommendation.stop_loss:.2f}")
-        metric_cols[1].metric("Allocation", f"{recommendation.allocation_pct:.1f}%")
-        metric_cols[2].metric("Capital", f"Rs {recommendation.allocation_amount:,.0f}")
+        metric_cols[1].metric("Conviction", recommendation.conviction_mode.replace("_", " "))
+        metric_cols[2].metric("Allocation", f"{recommendation.allocation_pct:.1f}%")
+
+        metric_cols = st.columns(2)
+        metric_cols[0].metric("Capital", f"Rs {recommendation.allocation_amount:,.0f}")
+        metric_cols[1].metric("Sector Exposure", f"{recommendation.sector_exposure_pct:.1f}%")
 
         st.markdown("### Reasoning")
         st.write(recommendation.reasoning)
+        st.info(recommendation.confidence_note)
+
+        st.markdown("### Analyst Note")
+        st.write(recommendation.analyst_note)
 
         if recommendation.personalization_warning:
             st.warning(recommendation.personalization_warning)
 
         st.markdown("### Next Step")
         st.write(recommendation.next_step)
+
+        st.markdown("### What To Watch Next")
+        st.write(recommendation.watch_next)
+
+        st.markdown("### Confirmation Triggers")
+        st.write(recommendation.confirmation_triggers)
+
+        st.markdown("### Invalidation Triggers")
+        st.write(recommendation.invalidation_triggers)
 
         st.markdown("### Data Sources")
         st.json(recommendation.sources)

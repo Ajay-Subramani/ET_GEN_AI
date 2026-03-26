@@ -7,3 +7,6 @@ def test_graph_returns_recommendation():
     assert result.action in {"BUY", "WATCH", "AVOID"}
     assert result.confidence_pct >= 0
     assert result.target_price >= result.entry_price
+    assert result.conviction_mode in {"HIGH_CONVICTION", "ALIGNED", "NORMAL"}
+    assert result.analyst_note
+    assert result.watch_next

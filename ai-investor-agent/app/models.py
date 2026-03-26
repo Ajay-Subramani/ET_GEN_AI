@@ -72,10 +72,16 @@ class TechnicalAnalysis(BaseModel):
 class Decision(BaseModel):
     action: Literal["BUY", "WATCH", "AVOID"]
     confidence: float
+    conviction_mode: Literal["HIGH_CONVICTION", "ALIGNED", "NORMAL"]
+    confidence_note: str
     entry_price: float
     target_price: float
     stop_loss: float
     reasoning: str
+    analyst_note: str
+    watch_next: list[str] = Field(default_factory=list)
+    confirmation_triggers: list[str] = Field(default_factory=list)
+    invalidation_triggers: list[str] = Field(default_factory=list)
 
 
 class Personalization(BaseModel):
@@ -91,21 +97,27 @@ class FinalRecommendation(BaseModel):
     user_id: str
     action: str
     confidence_pct: float
+    conviction_mode: str
+    confidence_note: str
     entry_price: float
     target_price: float
     stop_loss: float
     reasoning: str
+    analyst_note: str
     allocation_pct: float
     allocation_amount: float
     sector_exposure_pct: float
     personalization_warning: str | None = None
     next_step: str
+    watch_next: list[str] = Field(default_factory=list)
+    confirmation_triggers: list[str] = Field(default_factory=list)
+    invalidation_triggers: list[str] = Field(default_factory=list)
     sources: dict[str, Any] = Field(default_factory=dict)
 
     @property
     def summary(self) -> str:
         return (
-            f"Do {self.action} at Rs {self.entry_price:.2f} because {self.reasoning}, "
+            f"Do {self.action} at Rs {self.entry_price:.2f} because {self.analyst_note}, "
             f"with confidence {self.confidence_pct:.1f}%."
         )
 
