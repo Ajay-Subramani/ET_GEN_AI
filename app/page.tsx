@@ -526,27 +526,39 @@ function SignalsRadarScreen({ onDeployAgent }: { onDeployAgent: (symbol: string)
   const signals = [
     { 
       symbol: "TATASTEEL", 
-      type: "Volume Breakout", 
+      layer: "Layer 4",
+      type: "Management Commentary", 
       time: "2m ago", 
       confidence: 88, 
       color: "var(--primary)",
-      description: "Delivery volume spiked 400% above 20-day average. Institutional accumulation pattern detected ahead of macro cycle shift." 
+      description: "NLP sentiment analysis on Q3 earnings call transcript. Detected high-conviction semantic shift: management swapped 'expansion' for 'consolidation' and 'right-sizing', an early indicator of margin defense." 
     },
     { 
       symbol: "INFY", 
-      type: "Options Activity", 
+      layer: "Layer 3",
+      type: "Insider Cluster", 
       time: "14m ago", 
-      confidence: 72, 
-      color: "var(--warning)",
-      description: "Aggressive put writing at current strike indicating strong structural floor. Correlates with historical multi-month bottoms." 
+      confidence: 82, 
+      color: "var(--success)",
+      description: "Multiple Form C/D filings detected on SEBI disclosure portal. Promoter buying cluster (3 insiders) over a 2-week window during prolonged stock underperformance." 
     },
     { 
-      symbol: "PAYTM", 
-      type: "Regulatory Catalyst", 
+      symbol: "RELIANCE", 
+      layer: "Layer 2",
+      type: "Technical Pattern", 
       time: "1h ago", 
-      confidence: 64, 
+      confidence: 76, 
+      color: "var(--warning)",
+      description: "52-week breakout detected with 300% volume confirmation. Price has reclaimed the 20/50 EMA supply zone with positive RSI divergence on the daily timeframe." 
+    },
+    { 
+      symbol: "ZOMATO", 
+      layer: "Layer 1",
+      type: "XBRL Filing", 
+      time: "3h ago", 
+      confidence: 68, 
       color: "var(--danger)",
-      description: "High-frequency NLP engine detected positive shift in compliance verbiage from exchange filing. Watch for trend reversal confirmation." 
+      description: "XBRL-structured quarterly results show significant revenue surprise (+14%) against consensus estimates. Real-time NSE/BSE exchange filing processed under LODR regulations." 
     }
   ];
 
@@ -555,7 +567,7 @@ function SignalsRadarScreen({ onDeployAgent }: { onDeployAgent: (symbol: string)
       <div className="mb-10">
         <h1 className="font-serif text-4xl mb-3">Opportunity Radar</h1>
         <p className="text-slate-500 max-w-2xl leading-relaxed">
-          The AI continuously monitors corporate filings, option chains, and delivery volumes across the NSE. Anomalies are surfaced below as unverified signals. Deploy the agentic pipeline to autonomously synthesize a trading plan.
+          The AI continuously monitors 4 distinct signal layers across the NSE: Corporate Filings, Technical Patterns, Insider Flows, and Management Commentary NLP. Anomalies are surfaced below. Deploy the agentic pipeline to autonomously synthesize a trading plan.
         </p>
       </div>
 
@@ -563,9 +575,10 @@ function SignalsRadarScreen({ onDeployAgent }: { onDeployAgent: (symbol: string)
         {signals.map((signal, i) => (
           <div key={i} className="bg-white rounded-[20px] p-6 editorial-shadow border border-slate-100 flex flex-col md:flex-row gap-6 md:items-center justify-between group hover:border-[color:var(--primary)]/30 transition-colors">
             <div className="flex-1">
-              <div className="flex items-center gap-3 mb-3">
+              <div className="flex flex-wrap items-center gap-3 mb-3">
                 <span className="font-mono text-xl font-bold bg-slate-50 px-2 py-1 rounded">{signal.symbol}</span>
-                <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold bg-slate-100 px-3 py-1 rounded-full">{signal.type}</span>
+                <span className="text-[10px] uppercase tracking-widest text-[color:var(--primary)] font-bold bg-[color:var(--surface-low)] px-3 py-1 rounded-full">{signal.layer}</span>
+                <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold bg-slate-100 px-3 py-1 rounded-full">{signal.type}</span>
                 <span className="text-[10px] uppercase tracking-[0.2em] font-mono text-slate-400">{signal.time}</span>
               </div>
               <p className="text-sm text-slate-600 leading-relaxed pr-4">
@@ -573,19 +586,19 @@ function SignalsRadarScreen({ onDeployAgent }: { onDeployAgent: (symbol: string)
               </p>
             </div>
             
-            <div className="flex flex-row md:flex-col items-center md:items-end gap-3 md:gap-4 md:pl-6 md:border-l border-slate-100">
-               <div className="flex flex-col items-start md:items-end">
+            <div className="flex flex-row md:flex-col items-center md:items-end gap-3 md:gap-4 md:pl-6 md:border-l border-slate-100 min-w-[180px]">
+               <div className="flex flex-col items-start md:items-end w-full">
                  <span className="text-[10px] uppercase tracking-[0.2em] text-slate-400 mb-1">Signal Strength</span>
-                 <div className="flex items-center gap-2">
-                   <div className="h-2 w-16 bg-slate-100 rounded-full overflow-hidden">
+                 <div className="flex items-center gap-2 w-full justify-end">
+                   <div className="h-2 flex-1 max-w-[80px] bg-slate-100 rounded-full overflow-hidden">
                      <div className="h-full rounded-full" style={{ width: `${signal.confidence}%`, backgroundColor: signal.color }} />
                    </div>
-                   <span className="font-mono text-sm font-bold" style={{ color: signal.color }}>{signal.confidence}%</span>
+                   <span className="font-mono text-sm font-bold w-10 text-right" style={{ color: signal.color }}>{signal.confidence}%</span>
                  </div>
                </div>
                <button 
                 onClick={() => onDeployAgent(signal.symbol)}
-                className="ml-auto md:ml-0 bg-[color:var(--surface-low)] hover:bg-[color:var(--primary)] hover:text-white transition-all text-[color:var(--primary)] font-semibold text-xs uppercase tracking-widest px-6 py-3 rounded-xl border border-[color:var(--primary)]/10 hover:border-[color:var(--primary)]"
+                className="ml-auto md:ml-0 w-full text-center bg-[color:var(--surface-low)] hover:bg-[color:var(--primary)] hover:text-white transition-all text-[color:var(--primary)] font-semibold text-xs uppercase tracking-widest px-6 py-3 rounded-xl border border-[color:var(--primary)]/10 hover:border-[color:var(--primary)]"
                >
                  Deploy Agent →
                </button>
