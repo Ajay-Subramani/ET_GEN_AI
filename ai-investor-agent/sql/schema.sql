@@ -42,5 +42,25 @@ create table if not exists alerts (
   embedding vector(1536)
 );
 
+create table if not exists recommendation_outcomes (
+  id bigint generated always as identity primary key,
+  user_id text not null,
+  symbol text not null references stocks(symbol),
+  pattern_name text not null,
+  action text not null,
+  market_condition text not null,
+  signal_stack jsonb not null default '[]'::jsonb,
+  entry_price numeric not null,
+  target_price numeric not null,
+  stop_loss numeric not null,
+  outcome_return_pct numeric not null,
+  outcome_horizon_days integer not null,
+  outcome_label text not null,
+  created_at timestamptz not null default now()
+);
+
 create index if not exists idx_pattern_success_symbol_pattern
   on pattern_success_rates(symbol, pattern_name);
+
+create index if not exists idx_recommendation_outcomes_lookup
+  on recommendation_outcomes(symbol, pattern_name, market_condition);

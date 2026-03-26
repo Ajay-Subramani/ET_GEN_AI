@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+from statistics import mean
 from typing import Any
 
 from supabase import Client, create_client
 
 from app.config import get_settings
-from app.demo_data import DEMO_PATTERN_SUCCESS, DEMO_STOCKS, DEMO_USER_PORTFOLIOS
+from app.demo_data import (
+    DEMO_PATTERN_SUCCESS,
+    DEMO_RECOMMENDATION_OUTCOMES,
+    DEMO_SETUP_MEMORY,
+    DEMO_STOCKS,
+    DEMO_USER_PORTFOLIOS,
+)
+from app.models import SetupMemory
 
 
 class Repository:
@@ -73,3 +81,122 @@ class Repository:
             if result.data:
                 return result.data[0]
         return {"user_id": user_id, **DEMO_USER_PORTFOLIOS.get(user_id, DEMO_USER_PORTFOLIOS["demo_moderate"])}
+
+    def get_setup_memory(
+        self,
+        symbol: str,
+        pattern_name: str,
+        market_condition: str,
+        signal_stack: list[str],
+    ) -> SetupMemory:
+        normalized = symbol.upper()
+        if self._client:
+            result = (
+                self._client.table("recommendation_outcomes")
+                .select("*")
+                .eq("symbol", normalized)
+                .eq("pattern_name", pattern_name)
+                .execute()
+            )
+            rows = result.data or []
+            if rows:
+                return self._aggregate_setup_memory(
+                    normalized=normalized,
+                    pattern_name=pattern_name,
+                    market_condition=market_condition,
+                    signal_stack=signal_stack,
+                    rows=rows,
+                    source="supabase",
+                )
+
+        rows = [
+            row
+            for row in DEMO_RECOMMENDATION_OUTCOMES
+            if row["symbol"] == normalized and row["pattern_name"] == pattern_name
+        ]
+        memory = self._aggregate_setup_memory(
+            normalized=normalized,
+            pattern_name=pattern_name,
+            market_condition=market_condition,
+            signal_stack=signal_stack,
+            rows=rows,
+            source="demo",
+        )
+        demo_key = (normalized, pattern_name, market_condition)
+        if demo_key in DEMO_SETUP_MEMORY:
+            seeded = DEMO_SETUP_MEMORY[demo_key]
+            memory.similar_setups = max(memory.similar_setups, seeded["similar_setups"])
+            memory.exact_matches = max(memory.exact_matches, seeded["exact_matches"])
+            memory.success_rate = round((memory.success_rate + seeded["success_rate"]) / 2, 2)
+            memory.avg_return_pct = round((memory.avg_return_pct + seeded["avg_return_pct"]) / 2, 2)
+            if not memory.signal_stack:
+                memory.signal_stack = seeded["signal_stack"]
+        return memory
+
+    def record_outcome(self, payload: dict[str, Any]) -> dict[str, Any]:
+        body = {
+            "user_id": payload["user_id"],
+            "symbol": payload["symbol"].upper(),
+            "pattern_name": payload["pattern_name"],
+            "action": payload["action"],
+            "market_condition": payload["market_condition"],
+            "signal_stack": payload["signal_stack"],
+            "entry_price": payload["entry_price"],
+            "target_price": payload["target_price"],
+            "stop_loss": payload["stop_loss"],
+            "outcome_return_pct": payload["outcome_return_pct"],
+            "outcome_horizon_days": payload["outcome_horizon_days"],
+            "outcome_label": payload["outcome_label"],
+        }
+        if self._client:
+            result = self._client.table("recommendation_outcomes").insert(body).execute()
+            return result.data[0] if result.data else body
+        DEMO_RECOMMENDATION_OUTCOMES.append(body)
+        return body
+
+    def _aggregate_setup_memory(
+        self,
+        normalized: str,
+        pattern_name: str,
+        market_condition: str,
+        signal_stack: list[str],
+        rows: list[dict[str, Any]],
+        source: str,
+    ) -> SetupMemory:
+        if not rows:
+            return SetupMemory(
+                symbol=normalized,
+                pattern_name=pattern_name,
+                market_condition=market_condition,
+                signal_stack=signal_stack,
+                similar_setups=0,
+                exact_matches=0,
+                success_rate=0.5,
+                avg_return_pct=0.0,
+                source=source,
+            )
+
+        requested = set(signal_stack)
+        exact_rows = []
+        regime_rows = []
+        for row in rows:
+            row_stack = set(row.get("signal_stack") or [])
+            if row.get("market_condition") == market_condition:
+                regime_rows.append(row)
+                if requested and requested.issubset(row_stack):
+                    exact_rows.append(row)
+
+        sample_rows = exact_rows or regime_rows or rows
+        win_rate = mean(1.0 if row.get("outcome_label") == "win" else 0.0 for row in sample_rows)
+        avg_return = mean(float(row.get("outcome_return_pct", 0.0)) for row in sample_rows)
+        return SetupMemory(
+            symbol=normalized,
+            pattern_name=pattern_name,
+            market_condition=market_condition,
+            signal_stack=signal_stack,
+            similar_setups=len(regime_rows) or len(rows),
+            exact_matches=len(exact_rows),
+            success_rate=round(win_rate, 2),
+            avg_return_pct=round(avg_return, 2),
+            source=source,
+        )

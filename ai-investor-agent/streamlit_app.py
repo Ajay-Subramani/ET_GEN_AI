@@ -56,6 +56,9 @@ with right:
         st.markdown("### Analyst Note")
         st.write(recommendation.analyst_note)
 
+        st.markdown("### Pattern Memory")
+        st.json(recommendation.setup_memory.model_dump())
+
         if recommendation.personalization_warning:
             st.warning(recommendation.personalization_warning)
 

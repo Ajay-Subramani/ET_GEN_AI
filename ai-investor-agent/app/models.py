@@ -69,6 +69,26 @@ class TechnicalAnalysis(BaseModel):
     stop_loss: float
 
 
+class SetupMemory(BaseModel):
+    symbol: str
+    pattern_name: str
+    market_condition: str
+    signal_stack: list[str] = Field(default_factory=list)
+    similar_setups: int = 0
+    exact_matches: int = 0
+    success_rate: float = 0.5
+    avg_return_pct: float = 0.0
+    source: str = "demo"
+
+    @property
+    def narrative(self) -> str:
+        setup_scope = "this exact setup" if self.exact_matches else "similar setups"
+        return (
+            f"{setup_scope} appeared {max(self.exact_matches, self.similar_setups)} times, "
+            f"won {self.success_rate * 100:.0f}% of the time, and averaged {self.avg_return_pct:.1f}%."
+        )
+
+
 class Decision(BaseModel):
     action: Literal["BUY", "WATCH", "AVOID"]
     confidence: float
@@ -79,6 +99,7 @@ class Decision(BaseModel):
     stop_loss: float
     reasoning: str
     analyst_note: str
+    setup_memory: SetupMemory
     watch_next: list[str] = Field(default_factory=list)
     confirmation_triggers: list[str] = Field(default_factory=list)
     invalidation_triggers: list[str] = Field(default_factory=list)
@@ -104,6 +125,7 @@ class FinalRecommendation(BaseModel):
     stop_loss: float
     reasoning: str
     analyst_note: str
+    setup_memory: SetupMemory
     allocation_pct: float
     allocation_amount: float
     sector_exposure_pct: float
@@ -128,6 +150,7 @@ class AgentState(TypedDict, total=False):
     signal_bundle: SignalBundle
     context: EnrichedContext
     technicals: TechnicalAnalysis
+    setup_memory: SetupMemory
     decision: Decision
     personalization: Personalization
     recommendation: FinalRecommendation

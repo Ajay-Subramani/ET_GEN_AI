@@ -63,6 +63,68 @@ DEMO_PATTERN_SUCCESS = {
     },
 }
 
+DEMO_SETUP_MEMORY = {
+    ("TATASTEEL", "breakout", "risk_on"): {
+        "similar_setups": 47,
+        "exact_matches": 19,
+        "success_rate": 0.68,
+        "avg_return_pct": 11.2,
+        "signal_stack": ["bulk_deal", "delivery_spike", "oi_buildup", "pattern_start"],
+    },
+    ("HDFCBANK", "support_bounce", "neutral"): {
+        "similar_setups": 31,
+        "exact_matches": 11,
+        "success_rate": 0.61,
+        "avg_return_pct": 5.7,
+        "signal_stack": ["volume_breakout", "pattern_start"],
+    },
+}
+
+DEMO_RECOMMENDATION_OUTCOMES = [
+    {
+        "user_id": "demo_moderate",
+        "symbol": "TATASTEEL",
+        "pattern_name": "breakout",
+        "action": "BUY",
+        "market_condition": "risk_on",
+        "signal_stack": ["bulk_deal", "delivery_spike", "oi_buildup", "pattern_start"],
+        "entry_price": 132.5,
+        "target_price": 148.0,
+        "stop_loss": 125.0,
+        "outcome_return_pct": 12.4,
+        "outcome_horizon_days": 18,
+        "outcome_label": "win",
+    },
+    {
+        "user_id": "demo_aggressive",
+        "symbol": "TATASTEEL",
+        "pattern_name": "breakout",
+        "action": "BUY",
+        "market_condition": "risk_on",
+        "signal_stack": ["bulk_deal", "volume_breakout", "pattern_start"],
+        "entry_price": 130.0,
+        "target_price": 146.0,
+        "stop_loss": 123.0,
+        "outcome_return_pct": 9.1,
+        "outcome_horizon_days": 12,
+        "outcome_label": "win",
+    },
+    {
+        "user_id": "demo_moderate",
+        "symbol": "TATASTEEL",
+        "pattern_name": "breakout",
+        "action": "WATCH",
+        "market_condition": "risk_on",
+        "signal_stack": ["delivery_spike", "pattern_start"],
+        "entry_price": 128.0,
+        "target_price": 140.0,
+        "stop_loss": 121.0,
+        "outcome_return_pct": -4.3,
+        "outcome_horizon_days": 9,
+        "outcome_label": "loss",
+    },
+]
+
 DEMO_USER_PORTFOLIOS = {
     "demo_moderate": {
         "risk_profile": "moderate",

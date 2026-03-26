@@ -58,6 +58,7 @@ Implemented in `app/nodes.py` via `AnalystNodes.technical_analyzer()`.
 
 - Detects patterns: `breakout` (prior 20-day high + volume confirmation), `support_bounce` (near prior 20-day low + RSI filter).
 - Pulls pattern-specific historical success rate and avg return from `pattern_success_rates` (Supabase or demo).
+- Pulls setup memory from stored `recommendation_outcomes` and blends it into the technical edge.
 - Computes support/resistance from price history.
 - Computes option OI “support” strike for F&O stocks when available (or demo).
 - Computes risk/reward and enforces a 2:1 style target definition:
@@ -71,11 +72,20 @@ Output: `TechnicalAnalysis` including entry/target/stop-loss and pattern stats.
 Implemented in `app/nodes.py` via `AnalystNodes.decision_engine()`.
 
 - Confidence blend (0-1): signal score + context score + technical score.
+- Non-linear conviction stacking:
+  - `HIGH_CONVICTION`: strong signal cluster + aligned market + historical edge + technical edge + setup-memory support
+  - `ALIGNED`: multiple layers line up but not enough for high-conviction framing
+  - `NORMAL`: only partial alignment
 - Decision rules:
   - `>= 0.80` -> `BUY`
   - `0.60 - 0.79` -> `WATCH`
   - `< 0.60` -> `AVOID`
-- Reasoning string explicitly mentions signals + historical pattern success + market/sector regime.
+- Output now includes:
+  - analyst-style narrative
+  - confidence explanation in trader language
+  - confirmation triggers
+  - invalidation triggers
+  - watch-next checklist
 
 Output: `Decision` with action, confidence, entry/target/stop-loss, reasoning.
 
@@ -98,6 +108,18 @@ Output: final `FinalRecommendation` including allocation and a single-line summa
 
 `Do X at Rs Y because Z, with confidence W%.`
 
+### Adaptive Memory Layer
+
+Implemented in `app/repository.py` and surfaced in the final recommendation.
+
+- Stores realized trade outcomes in `recommendation_outcomes`.
+- Aggregates:
+  - similar setups by symbol + pattern + market regime
+  - exact matches by signal stack subset
+- Produces memory statements like:
+  - `this exact setup appeared 19 times, won 68% of the time, and averaged 11.2%`
+- Works in both Supabase-backed mode and demo fallback mode.
+
 ### Orchestration
 
 The pipeline is fully autonomous and sequential using LangGraph:
@@ -112,7 +134,9 @@ Implemented in `app/main.py`.
 
 - `GET /health`
 - `GET /demo/users`
+- `GET /memory/{symbol}` (query by `pattern_name` and optional `market_condition`)
 - `POST /analyze` (symbol + user_id -> full recommendation + `summary`)
+- `POST /outcomes` (record realized trade outcome and return updated memory snapshot)
 
 ### Streamlit Demo
 
@@ -155,6 +179,12 @@ pytest -q
 python -c "from app.graph import run_recommendation; r=run_recommendation('TATASTEEL','demo_moderate'); print(r.summary)"
 ```
 
+Inspect adaptive memory directly:
+
+```bash
+python -c "from app.graph import run_recommendation; r=run_recommendation('TATASTEEL','demo_moderate'); print(r.setup_memory.model_dump())"
+```
+
 Run the API:
 
 ```bash
@@ -165,8 +195,11 @@ Verify the API:
 
 ```bash
 curl -s http://127.0.0.1:8000/health
+curl -s "http://127.0.0.1:8000/memory/TATASTEEL?pattern_name=breakout&market_condition=neutral" | python -m json.tool
 curl -s -X POST http://127.0.0.1:8000/analyze -H 'content-type: application/json' \
   -d '{"symbol":"TATASTEEL","user_id":"demo_moderate"}' | python -m json.tool
+curl -s -X POST http://127.0.0.1:8000/outcomes -H 'content-type: application/json' \
+  -d '{"user_id":"demo_moderate","symbol":"TATASTEEL","pattern_name":"breakout","action":"BUY","market_condition":"neutral","signal_stack":["bulk_deal","delivery_spike","oi_buildup"],"entry_price":133.0,"target_price":149.0,"stop_loss":126.0,"outcome_return_pct":13.1,"outcome_horizon_days":16,"outcome_label":"win"}' | python -m json.tool
 ```
 
 Run the demo UI:
@@ -207,6 +240,7 @@ When configured, historical success rates and portfolios come from Supabase; oth
 - Delivery percentage uses mock values when live delivery data is unavailable.
 - Sector trends use ETF-style proxies on Yahoo Finance for demo convenience.
 - Historical success rates come from Supabase when configured, otherwise from seeded in-memory defaults.
+- Setup memory adapts from stored outcomes and can change immediately after `POST /outcomes`.
 - Option-chain support is approximated when NSE derivative data is missing.
 - Local runtime verification in this workspace may fail on Python `3.14.x`; use Python `3.11-3.13` for a clean setup.
 
@@ -216,3 +250,4 @@ When configured, historical success rates and portfolios come from Supabase; oth
 - OI “buildup” is approximated as a Put OI support strike, not a strict `Put OI > Call OI by 20%` calculation.
 - Only two technical patterns are implemented (`breakout`, `support_bounce`); head-and-shoulders is not implemented yet.
 - `alerts` table exists (pgvector), but embedding generation + similarity search is not wired yet.
+- Outcome learning currently aggregates in-process for demo fallback; persistent learning requires Supabase.

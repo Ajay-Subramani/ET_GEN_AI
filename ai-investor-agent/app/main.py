@@ -16,6 +16,21 @@ class RecommendationRequest(BaseModel):
     user_id: str
 
 
+class OutcomeRequest(BaseModel):
+    user_id: str
+    symbol: str
+    pattern_name: str
+    action: str
+    market_condition: str
+    signal_stack: list[str]
+    entry_price: float
+    target_price: float
+    stop_loss: float
+    outcome_return_pct: float
+    outcome_horizon_days: int
+    outcome_label: str
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     settings = get_settings()
@@ -37,3 +52,26 @@ def analyze(payload: RecommendationRequest) -> dict[str, object]:
     body = recommendation.model_dump()
     body["summary"] = recommendation.summary
     return body
+
+
+@app.get("/memory/{symbol}")
+def memory(symbol: str, pattern_name: str, market_condition: str = "neutral") -> dict[str, object]:
+    repo = Repository()
+    memory_snapshot = repo.get_setup_memory(symbol, pattern_name, market_condition, [])
+    return memory_snapshot.model_dump()
+
+
+@app.post("/outcomes")
+def record_outcome(payload: OutcomeRequest) -> dict[str, object]:
+    repo = Repository()
+    stored = repo.record_outcome(payload.model_dump())
+    memory_snapshot = repo.get_setup_memory(
+        symbol=payload.symbol,
+        pattern_name=payload.pattern_name,
+        market_condition=payload.market_condition,
+        signal_stack=payload.signal_stack,
+    )
+    return {
+        "stored_outcome": stored,
+        "updated_memory": memory_snapshot.model_dump(),
+    }

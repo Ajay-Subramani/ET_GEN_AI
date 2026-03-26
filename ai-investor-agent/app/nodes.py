@@ -14,6 +14,7 @@ from app.models import (
     SectorContext,
     Signal,
     SignalBundle,
+    SetupMemory,
     TechnicalAnalysis,
     TechnicalPattern,
 )
@@ -189,12 +190,28 @@ class AnalystNodes:
             target_price=target_price,
             stop_loss=stop_loss,
         )
+        signal_types = [signal.type for signal in state["signal_bundle"].signals]
+        state["setup_memory"] = self.repo.get_setup_memory(
+            symbol=symbol,
+            pattern_name=pattern_name,
+            market_condition=state["context"].market.condition,
+            signal_stack=signal_types,
+        )
         return state
 
     def decision_engine(self, state: AgentState) -> AgentState:
         signal_bundle = state["signal_bundle"]
         context = state["context"]
         technicals = state["technicals"]
+        setup_memory = state.get(
+            "setup_memory",
+            SetupMemory(
+                symbol=state["symbol"],
+                pattern_name=technicals.pattern.name,
+                market_condition=context.market.condition,
+                signal_stack=[signal.type for signal in signal_bundle.signals],
+            ),
+        )
 
         signal_score = signal_bundle.total_score / signal_bundle.max_score
         context_score = (
@@ -202,7 +219,7 @@ class AnalystNodes:
             + context.sector.strength * 0.2
             + min(context.market.breadth / 2, 1.0) * 0.2
         )
-        technical_score = technicals.pattern.success_rate
+        technical_score = (technicals.pattern.success_rate * 0.6) + (setup_memory.success_rate * 0.4)
         if technicals.pattern.risk_reward_ratio >= 2:
             technical_score = min(1.0, technical_score + 0.08)
         if technicals.pattern.detected:
@@ -212,7 +229,10 @@ class AnalystNodes:
         aligned_market = context.sector.trend == "bullish" or context.market.condition == "risk_on"
         historical_edge = context.historical.success_rate >= 0.65
         technical_edge = technicals.pattern.detected or technicals.pattern.risk_reward_ratio >= 2
-        if strong_signal_count >= 4 and aligned_market and historical_edge and technical_edge:
+        if setup_memory.exact_matches >= 10 and setup_memory.success_rate >= 0.65:
+            technical_score = min(1.0, technical_score + 0.05)
+
+        if strong_signal_count >= 4 and aligned_market and historical_edge and technical_edge and setup_memory.exact_matches >= 5:
             conviction_mode = "HIGH_CONVICTION"
             confidence_bonus = 0.10
             confidence_note = "Confidence is high because signals, historical edge, technical structure, and market regime all align."
@@ -243,12 +263,12 @@ class AnalystNodes:
                 f"{technicals.pattern.name} historically succeeded "
                 f"{technicals.pattern.success_rate * 100:.0f}% with avg {technicals.pattern.avg_return_pct:.1f}% return"
             ),
+            setup_memory.narrative,
             f"sector trend is {context.sector.trend} and market is {context.market.condition}",
         ]
         analyst_note = (
             f"{signal_bundle.symbol} is showing {strong_signal_count} aligned signals: {lead_signal_text}. "
-            f"Similar {technicals.pattern.name} setups worked {context.historical.success_rate * 100:.0f}% of the time, "
-            f"with average follow-through near {context.historical.avg_return_pct:.1f}%. "
+            f"Pattern memory says {setup_memory.narrative} "
             f"{confidence_note}"
         )
         confirmation_triggers = [
@@ -277,6 +297,7 @@ class AnalystNodes:
             stop_loss=technicals.stop_loss,
             reasoning=" + ".join(reasons),
             analyst_note=analyst_note,
+            setup_memory=setup_memory,
             watch_next=watch_next,
             confirmation_triggers=confirmation_triggers,
             invalidation_triggers=invalidation_triggers,
@@ -340,6 +361,7 @@ class AnalystNodes:
             stop_loss=decision.stop_loss,
             reasoning=decision.reasoning,
             analyst_note=decision.analyst_note,
+            setup_memory=decision.setup_memory,
             allocation_pct=adjusted_allocation * 100,
             allocation_amount=capital * adjusted_allocation,
             sector_exposure_pct=sector_exposure_pct * 100,

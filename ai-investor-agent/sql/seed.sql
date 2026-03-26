@@ -33,3 +33,24 @@ insert into user_portfolios (user_id, holdings, risk_profile, total_capital) val
   2500000
 )
 on conflict (user_id) do nothing;
+
+insert into recommendation_outcomes (
+  user_id, symbol, pattern_name, action, market_condition, signal_stack,
+  entry_price, target_price, stop_loss, outcome_return_pct, outcome_horizon_days, outcome_label
+) values
+(
+  'demo_moderate', 'TATASTEEL', 'breakout', 'BUY', 'risk_on',
+  '["bulk_deal","delivery_spike","oi_buildup","pattern_start"]'::jsonb,
+  132.5, 148.0, 125.0, 12.4, 18, 'win'
+),
+(
+  'demo_aggressive', 'TATASTEEL', 'breakout', 'BUY', 'risk_on',
+  '["bulk_deal","volume_breakout","pattern_start"]'::jsonb,
+  130.0, 146.0, 123.0, 9.1, 12, 'win'
+),
+(
+  'demo_moderate', 'TATASTEEL', 'breakout', 'WATCH', 'risk_on',
+  '["delivery_spike","pattern_start"]'::jsonb,
+  128.0, 140.0, 121.0, -4.3, 9, 'loss'
+)
+on conflict do nothing;
