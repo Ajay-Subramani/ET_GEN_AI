@@ -131,6 +131,8 @@ class Repository:
             "outcome_return_pct": payload["outcome_return_pct"],
             "outcome_horizon_days": payload["outcome_horizon_days"],
             "outcome_label": payload["outcome_label"],
+            "exit_reason": payload.get("exit_reason"),
+            "is_stop_loss_hit": payload.get("is_stop_loss_hit", False),
         }
         if self._client:
             try:
@@ -159,6 +161,8 @@ class Repository:
                 exact_matches=0,
                 success_rate=0.5,
                 avg_return_pct=0.0,
+                target_hits=0,
+                stop_loss_hits=0,
                 source=source,
             )
 
@@ -175,6 +179,9 @@ class Repository:
         sample_rows = exact_rows or regime_rows or rows
         win_rate = mean(1.0 if row.get("outcome_label") == "win" else 0.0 for row in sample_rows)
         avg_return = mean(float(row.get("outcome_return_pct", 0.0)) for row in sample_rows)
+        stop_loss_count = sum(1 for row in sample_rows if row.get("is_stop_loss_hit"))
+        target_hit_count = len(sample_rows) - stop_loss_count if sample_rows else 0
+
         return SetupMemory(
             symbol=normalized,
             pattern_name=pattern_name,
@@ -184,5 +191,7 @@ class Repository:
             exact_matches=len(exact_rows),
             success_rate=round(win_rate, 2),
             avg_return_pct=round(avg_return, 2),
+            target_hits=target_hit_count,
+            stop_loss_hits=stop_loss_count,
             source=source,
         )

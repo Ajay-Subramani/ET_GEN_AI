@@ -30,6 +30,8 @@ export interface SetupMemory {
   exact_matches: number;
   success_rate: number;
   avg_return_pct: number;
+  target_hits: number;
+  stop_loss_hits: number;
   source: string;
 }
 

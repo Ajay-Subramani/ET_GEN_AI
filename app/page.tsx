@@ -900,7 +900,7 @@ function ResultsScreen({
                 </p>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+            <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
               <MetricCard
                 label="Similar Setups"
                 value={String(recommendation.setup_memory.similar_setups)}
@@ -912,6 +912,14 @@ function ResultsScreen({
               <MetricCard
                 label="Avg. Return"
                 value={formatPercent(recommendation.setup_memory.avg_return_pct)}
+              />
+              <MetricCard
+                label="Target Hits"
+                value={String(recommendation.setup_memory.target_hits)}
+              />
+              <MetricCard
+                label="Stop-Loss Hits"
+                value={String(recommendation.setup_memory.stop_loss_hits)}
               />
               <MetricCard
                 label="Market Regime"

@@ -29,6 +29,8 @@ class OutcomeRequest(BaseModel):
     outcome_return_pct: float
     outcome_horizon_days: int
     outcome_label: str
+    exit_reason: str | None = None
+    is_stop_loss_hit: bool = False
 
 
 @app.get("/health")
