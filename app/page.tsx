@@ -17,6 +17,7 @@ import type {
   UserPortfolio,
   UsersResponse,
   ActionType,
+  BackendActionType,
 } from "@/lib/ai-investor";
 
 const SYMBOLS = ["TATASTEEL", "RELIANCE", "HDFCBANK", "INFY", "SUNPHARMA"];
@@ -57,6 +58,22 @@ const ACTION_STYLES: Record<
   },
 };
 
+function mapBackendActionToActionType(
+  action: BackendActionType,
+  confidence_score: number,
+): ActionType {
+  switch (action) {
+    case "BUY":
+      return confidence_score >= 0.3 ? "High Conviction Buy" : "Potential Buy";
+    case "WATCH":
+      return "Watch";
+    case "AVOID":
+      return "Avoid / Exit";
+    default:
+      return "Watch"; // Fallback
+  }
+}
+
 const DEFAULT_PORTFOLIO: UserPortfolio = {
   risk_profile: "moderate",
   total_capital: 0,
@@ -67,6 +84,7 @@ type RadarSignal = {
   id: string;
   symbol: string;
   category: string;
+  memo_narrative: string;
   signal_type: string;
   description: string;
   confidence_pct: number;
@@ -84,6 +102,13 @@ type RadarFeed = {
   radar_summary: string;
   signals: RadarSignal[];
   agent_trace?: AgentStepTrace[];
+};
+
+type PortfolioExtractResponse = {
+  extracted_holdings?: UserPortfolio["holdings"];
+  holdings?: UserPortfolio["holdings"];
+  message?: string;
+  error?: string;
 };
 
 function formatCurrency(value: number) {
@@ -125,6 +150,122 @@ async function fetchJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> 
   return data;
 }
 
+interface SymbolReportModalProps {
+  report: RecommendationResponse;
+  onClose: () => void;
+}
+
+function SymbolReportModal({ report, onClose }: SymbolReportModalProps) {
+  const mappedAction = mapBackendActionToActionType(report.action, report.confidence_score);
+  const styles = ACTION_STYLES[mappedAction] || ACTION_STYLES["Watch"];
+  
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="bg-white rounded-[32px] w-full max-w-3xl max-h-[90vh] overflow-hidden shadow-2xl border border-slate-200 flex flex-col">
+        <header className="px-8 py-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+          <div className="flex items-center gap-4">
+            <span className="font-mono text-3xl font-bold">{report.symbol}</span>
+            <span className={`text-xs font-bold uppercase tracking-widest px-3 py-1 rounded-full ${styles.tone}`}>
+              {mappedAction}
+            </span>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-400">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </header>
+
+        <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
+          <section className="mb-10">
+            <h3 className="text-[10px] uppercase tracking-[0.2em] text-slate-400 font-bold mb-4">Investment Memo</h3>
+            <p className="font-serif text-2xl leading-snug text-slate-800">
+              {report.memo_narrative || report.summary}
+            </p>
+          </section>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-10">
+            <section className="bg-slate-50 rounded-3xl p-6 border border-slate-100">
+              <h4 className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-4">Fundamental Proof</h4>
+              <div className="space-y-3">
+                <div className="flex justify-between items-center text-sm font-mono">
+                  <span className="text-slate-500">P/E Ratio</span>
+                  <span className="font-bold">{report.fundamental_context?.pe_ratio ? `${report.fundamental_context.pe_ratio}x` : "N/A"}</span>
+                </div>
+                <div className="flex justify-between items-center text-sm font-mono">
+                  <span className="text-slate-500">ROE</span>
+                  <span className={`${(report.fundamental_context?.roe ?? 0) > 15 ? "text-emerald-600" : "text-slate-800"} font-bold`}>
+                    {report.fundamental_context?.roe ? `${report.fundamental_context.roe}%` : "N/A"}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-sm font-mono">
+                  <span className="text-slate-500">Debt/Equity</span>
+                  <span className={`${(report.fundamental_context?.debt_to_equity ?? 1) < 0.5 ? "text-emerald-600" : "text-slate-800"} font-bold`}>
+                    {report.fundamental_context?.debt_to_equity ?? "N/A"}
+                  </span>
+                </div>
+              </div>
+            </section>
+
+            <section className="bg-slate-50 rounded-3xl p-6 border border-slate-100">
+              <h4 className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-4">Execution Protocol</h4>
+              <div className="space-y-3">
+                <div className="flex justify-between items-center text-sm font-mono">
+                  <span className="text-slate-500">Target</span>
+                  <span className="text-[color:var(--primary)] font-bold">{formatCurrency(report.target_price)}</span>
+                </div>
+                <div className="flex justify-between items-center text-sm font-mono">
+                  <span className="text-slate-500">Stop Loss</span>
+                  <span className="text-[color:var(--danger)] font-bold">{formatCurrency(report.stop_loss)}</span>
+                </div>
+                <div className="flex justify-between items-center text-sm font-mono">
+                  <span className="text-slate-500">Confidence</span>
+                  <span className="font-bold">{(report.confidence_score * 100).toFixed(0)}%</span>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <section className="mb-10">
+            <h4 className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-4">Alpha Reasoning</h4>
+            <div className="space-y-2">
+              {Array.isArray(report.reasoning) ? report.reasoning.map((r, i) => (
+                <div key={i} className="flex gap-3 text-sm text-slate-600 leading-relaxed">
+                  <span className="text-[color:var(--primary)]">•</span>
+                  <span>{r}</span>
+                </div>
+              )) : (
+                <div className="text-sm text-slate-600 leading-relaxed">
+                  {report.reasoning}
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className="bg-slate-900 rounded-3xl p-6 border border-slate-800">
+             <h4 className="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-4">Agent Verification Trace</h4>
+             <div className="space-y-4">
+               {report.agent_trace?.slice(0, 3).map((step, idx) => (
+                 <div key={idx} className="border-l border-slate-800 pl-4 py-1">
+                   <div className="text-emerald-500 font-mono text-[10px] mb-1">[{step.step_name}]</div>
+                   <div className="text-slate-400 text-xs italic">"{step.thought}"</div>
+                 </div>
+               ))}
+             </div>
+          </section>
+        </div>
+
+        <footer className="px-8 py-6 border-t border-slate-100 bg-slate-50/50 flex justify-end">
+          <button 
+            onClick={onClose}
+            className="rounded-2xl bg-white border border-slate-200 px-6 py-3 font-bold text-slate-600 hover:bg-slate-50 active:scale-[0.98] transition-all"
+          >
+            Close Report
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
 export type TabId = "Terminal" | "Signals" | "Portfolio" | "Memory";
 
 export default function Home() {
@@ -145,6 +286,8 @@ export default function Home() {
   const [isBootstrapping, startBootstrapTransition] = useTransition();
   const [isAnalyzing, startAnalyzeTransition] = useTransition();
   const [isSavingOutcome, startOutcomeTransition] = useTransition();
+  const [selectedReport, setSelectedReport] = useState<RecommendationResponse | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -235,6 +378,40 @@ export default function Home() {
     });
   };
 
+  const handlePortfolioUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setError(null);
+    setIsUploading(true);
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("user_id", effectiveUserId);
+
+    try {
+      const response = await fetch("/api/portfolio/extract", {
+        method: "POST",
+        body: formData,
+      });
+      const result = (await response.json()) as PortfolioExtractResponse;
+
+      if (!response.ok) throw new Error(result.message || "Upload failed");
+
+      const extractedHoldings = result.extracted_holdings ?? result.holdings;
+      if (!extractedHoldings) throw new Error("Portfolio extraction returned no holdings.");
+
+      setPortfolio((prev) => ({
+        ...prev,
+        holdings: extractedHoldings,
+      }));
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Vision extraction failed");
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   const deployAgentFromRadar = (targetSymbol: string) => {
     setSymbol(targetSymbol);
     setActiveTab("Terminal");
@@ -289,7 +466,7 @@ export default function Home() {
   };
 
   const activeStyles = recommendation
-    ? ACTION_STYLES[recommendation.action]
+    ? ACTION_STYLES[mapBackendActionToActionType(recommendation.action, recommendation.confidence_score)]
     : ACTION_STYLES["Watch"];
 
   const supportingStats = [
@@ -365,7 +542,11 @@ export default function Home() {
           )}
 
           {activeTab === "Portfolio" && (
-            <PortfolioScreen portfolio={portfolio} />
+            <PortfolioScreen 
+              portfolio={portfolio} 
+              isUploading={isUploading} 
+              handlePortfolioUpload={handlePortfolioUpload} 
+            />
           )}
 
           {activeTab === "Memory" && (
@@ -598,10 +779,35 @@ function SignalsRadarScreen({ userId, onDeployAgent }: { userId: string; onDeplo
       .finally(() => setIsRefreshingMonitored(false));
   };
 
+  const [selectedReport, setSelectedReport] = useState<RecommendationResponse | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+
   useEffect(() => {
     fetchSignals();
     fetchMonitored();
   }, [userId]);
+
+  const handlePortfolioUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      await fetchJson<any>("/api/portfolio/extract", {
+        method: "POST",
+        body: formData,
+      });
+      // Refresh user portfolio
+      window.location.reload();
+    } catch (err) {
+      console.error("Upload failed", err);
+    } finally {
+      setIsUploading(false);
+    }
+  };
 
   const handleManualScan = (symbolToScan: string = searchSymbol) => {
     if (!symbolToScan) return;
@@ -741,7 +947,8 @@ function SignalsRadarScreen({ userId, onDeployAgent }: { userId: string; onDeplo
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {monitored.map((m) => {
               const res = m.latest_result;
-              const styles = res ? ACTION_STYLES[res.action as ActionType] : ACTION_STYLES["Watch"];
+              const mappedAction = res ? mapBackendActionToActionType(res.action as BackendActionType, res.confidence_score) : "Watch";
+              const styles = ACTION_STYLES[mappedAction];
               return (
                 <div key={m.id} className="bg-white rounded-[24px] p-6 border border-slate-100 shadow-sm hover:shadow-md transition-shadow relative group">
                   <div className="flex items-center justify-between mb-4">
@@ -749,7 +956,7 @@ function SignalsRadarScreen({ userId, onDeployAgent }: { userId: string; onDeplo
                       <span className="font-mono text-xl font-bold">{m.symbol}</span>
                       {res && (
                         <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full ${styles.tone}`}>
-                          {res.action}
+                          {mappedAction}
                         </span>
                       )}
                     </div>
@@ -774,13 +981,21 @@ function SignalsRadarScreen({ userId, onDeployAgent }: { userId: string; onDeplo
                   )}
 
                   <div className="pt-4 border-t border-slate-50 flex items-center justify-between text-[10px] font-bold uppercase tracking-widest">
-                    <span className="text-slate-400">Interval: {m.interval_minutes}m</span>
-                    <button 
-                      onClick={() => handleManualScan(m.symbol)}
-                      className="text-[color:var(--primary)] hover:underline"
-                    >
-                      Scan Now →
-                    </button>
+                    <div className="flex gap-4">
+                      <button 
+                        onClick={() => setSelectedReport(res)}
+                        className="text-[color:var(--primary)] hover:underline"
+                      >
+                       Open Report →
+                      </button>
+                      <button 
+                        onClick={() => handleManualScan(m.symbol)}
+                        className="text-slate-400 hover:text-slate-600"
+                      >
+                        Rescan Now
+                      </button>
+                    </div>
+                    <span className="text-slate-400">{m.interval_minutes}m</span>
                   </div>
                 </div>
               );
@@ -788,6 +1003,13 @@ function SignalsRadarScreen({ userId, onDeployAgent }: { userId: string; onDeplo
           </div>
         )}
       </section>
+
+      {selectedReport && (
+        <SymbolReportModal 
+          report={selectedReport} 
+          onClose={() => setSelectedReport(null)} 
+        />
+      )}
 
       {/* Live Radar Feed Section */}
       <section>
@@ -810,7 +1032,7 @@ function SignalsRadarScreen({ userId, onDeployAgent }: { userId: string; onDeplo
                     <span className="text-[10px] uppercase tracking-[0.2em] font-mono text-slate-400">{signal.time}</span>
                   </div>
                   <p className="text-sm text-slate-600 leading-relaxed pr-4">
-                    {signal.description}
+                    {signal.memo_narrative || signal.description}
                   </p>
                 </div>
                 
@@ -840,7 +1062,15 @@ function SignalsRadarScreen({ userId, onDeployAgent }: { userId: string; onDeplo
   );
 }
 
-function PortfolioScreen({ portfolio }: { portfolio: UserPortfolio }) {
+function PortfolioScreen({ 
+  portfolio, 
+  isUploading, 
+  handlePortfolioUpload 
+}: { 
+  portfolio: UserPortfolio;
+  isUploading: boolean;
+  handlePortfolioUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
+}) {
   const holdings = portfolio.holdings || [];
   
   return (
@@ -855,7 +1085,13 @@ function PortfolioScreen({ portfolio }: { portfolio: UserPortfolio }) {
             Personalized context used by the AI Agent for trade sizing and risk management. High-conviction signals are scaled based on your current sector exposure and liquidity.
           </p>
         </div>
-        <div className="text-right pb-1">
+        <div className="text-right pb-1 flex flex-col items-end">
+          <label className="cursor-pointer">
+            <input type="file" className="hidden" aria-label="Upload Portfolio" onChange={handlePortfolioUpload} accept="image/*" />
+            <div className={`text-[10px] uppercase tracking-widest font-bold px-4 py-2 rounded-xl border border-dashed transition-all mb-4 ${isUploading ? 'bg-slate-100 border-slate-300' : 'bg-white border-emerald-300 text-emerald-600 hover:bg-emerald-50'}`}>
+              {isUploading ? "Extracting..." : "+ Upload Portfolio Screenshot"}
+            </div>
+          </label>
           <span className="text-[10px] uppercase tracking-[0.22em] text-slate-400 font-bold block mb-1">Total Liquidity</span>
           <span className="font-mono text-3xl font-bold">{formatCurrency(portfolio.total_capital)}</span>
         </div>
@@ -1302,7 +1538,6 @@ function ResultsScreen({
   latestComputedAt,
   recommendation,
   riskProfile,
-  styles,
   onOpenOutcomeModal,
   onStartOver,
 }: {
@@ -1310,10 +1545,12 @@ function ResultsScreen({
   latestComputedAt: string;
   recommendation: RecommendationResponse;
   riskProfile: RiskProfile;
-  styles: { badge: string; accent: string; tone: string; eyebrow: string };
   onOpenOutcomeModal: () => void;
   onStartOver: () => void;
 }) {
+  const mappedAction = mapBackendActionToActionType(recommendation.action, recommendation.confidence_score);
+  const actionStyles = ACTION_STYLES[mappedAction];
+
   return (
     <>
       <header className="flex flex-wrap items-center justify-between gap-4 bg-[color:var(--surface-low)] px-8 py-6">
@@ -1363,15 +1600,15 @@ function ResultsScreen({
             <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
               <div className="space-y-2">
                 <div className="flex items-center gap-3">
-                  <span className={`rounded-lg px-6 py-1.5 text-lg font-bold ${styles.badge}`}>
-                    {recommendation.action}
+                  <span className={`rounded-lg px-6 py-1.5 text-lg font-bold ${actionStyles.badge}`}>
+                    {mappedAction}
                   </span>
-                  <span className={`rounded-sm px-3 py-1 text-xs font-bold uppercase tracking-[0.22em] ${styles.tone}`}>
+                  <span className={`rounded-sm px-3 py-1 text-xs font-bold uppercase tracking-[0.22em] ${actionStyles.tone}`}>
                     {recommendation.conviction_mode.replaceAll("_", " ")}
                   </span>
                 </div>
                 <h1 className="font-serif text-4xl leading-tight">
-                  {styles.eyebrow}
+                  {actionStyles.eyebrow}
                 </h1>
               </div>
               <div className="text-right">
@@ -1413,7 +1650,7 @@ function ResultsScreen({
             </div>
           </section>
 
-          {recommendation.action !== "Avoid / Exit" && recommendation.confidence_score >= 0.3 ? (
+          {mappedAction !== "Avoid / Exit" && recommendation.confidence_score >= 0.3 ? (
             <section className="editorial-shadow rounded-[20px] bg-white p-8">
               <h3 className="mb-6 text-xs uppercase tracking-[0.28em] text-slate-500">
                 Execution Plan
@@ -1455,7 +1692,7 @@ function ResultsScreen({
           ) : (
             <section className="rounded-[20px] border-2 border-dashed border-[color:var(--outline-variant)]/30 p-8 text-center bg-slate-50/30">
               <p className="font-serif text-xl italic text-slate-500">
-                {recommendation.action === "Avoid / Exit" 
+                {mappedAction === "Avoid / Exit" 
                   ? "Execution plan suppressed. System recommends capital preservation." 
                   : "Execution plan hidden due to low structural confidence (< 30%). Wait for stronger alignment."}
               </p>

@@ -1,5 +1,6 @@
 export type RiskProfile = "aggressive" | "moderate" | "conservative";
 export type ActionType = "High Conviction Buy" | "Potential Buy" | "Watch" | "Avoid / Exit";
+export type BackendActionType = "BUY" | "WATCH" | "AVOID";
 export type OutcomeLabel = "win" | "loss" | "neutral";
 export interface PortfolioHolding {
   symbol: string;
@@ -18,6 +19,17 @@ export interface UserPortfolio {
 export interface UsersResponse {
   default_user_id: string;
   user_portfolio: UserPortfolio;
+}
+
+export interface FundamentalContext {
+  pe_ratio: number | null;
+  roce: number | null;
+  roe: number | null;
+  debt_to_equity: number | null;
+  revenue_growth: number | null;
+  profit_growth: number | null;
+  operating_margin: number | null;
+  source: string;
 }
 
 export interface SetupMemory {
@@ -50,14 +62,15 @@ export interface AgentStepTrace {
 export interface RecommendationResponse {
   symbol: string;
   user_id: string;
-  action: ActionType;
+  action: BackendActionType;
   confidence_score: number;
   conviction_mode: string;
   confidence_note: string;
   entry_price: number;
   target_price: number;
   stop_loss: number;
-  reasoning: string;
+  reasoning: string | string[];
+  memo_narrative?: string;
   analyst_note: string;
   setup_memory: SetupMemory;
   allocation_pct: number;
@@ -68,6 +81,7 @@ export interface RecommendationResponse {
   watch_next: string[];
   confirmation_triggers: string[];
   invalidation_triggers: string[];
+  fundamental_context: FundamentalContext;
   sources: {
     signals: string[];
     historical: string;
@@ -114,8 +128,16 @@ function getBackendBaseUrl() {
   return process.env.AI_INVESTOR_API_BASE_URL ?? "http://127.0.0.1:8000";
 }
 
+function hasContentType(headers: HeadersInit | undefined) {
+  if (!headers) return false;
+  if (headers instanceof Headers) return headers.has("content-type");
+  if (Array.isArray(headers)) return headers.some(([key]) => key.toLowerCase() === "content-type");
+  return Object.keys(headers).some((key) => key.toLowerCase() === "content-type");
+}
+
 async function proxyToBackend(path: string, init?: RequestInit): Promise<Response> {
   const targetUrl = new URL(path, getBackendBaseUrl());
+  const shouldSetJsonContentType = typeof init?.body === "string" && !hasContentType(init?.headers);
 
   try {
     return await fetch(targetUrl, {
@@ -123,7 +145,7 @@ async function proxyToBackend(path: string, init?: RequestInit): Promise<Respons
       cache: "no-store",
       headers: {
         ...(init?.headers ?? {}),
-        ...(init?.body ? { "content-type": "application/json" } : {}),
+        ...(shouldSetJsonContentType ? { "content-type": "application/json" } : {}),
       },
     });
   } catch (error) {
@@ -150,5 +172,19 @@ export async function proxyPost(path: string, body: unknown): Promise<Response> 
   return proxyToBackend(path, {
     method: "POST",
     body: JSON.stringify(body),
+  });
+}
+
+export async function proxyPostFormData(path: string, body: FormData): Promise<Response> {
+  return proxyToBackend(path, {
+    method: "POST",
+    body,
+  });
+}
+
+export async function proxyDelete(path: string, searchParams?: URLSearchParams): Promise<Response> {
+  const suffix = searchParams?.toString();
+  return proxyToBackend(suffix ? `${path}?${suffix}` : path, {
+    method: "DELETE",
   });
 }
