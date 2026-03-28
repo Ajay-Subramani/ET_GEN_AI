@@ -22,6 +22,7 @@ The response also includes entry/target/stop-loss and a personalized allocation.
 
 - Python 3.11+
 - LangGraph for orchestration
+- OpenAI Responses API for optional tool-using LLM agents
 - Supabase/Postgres for state and historical stats
 - yfinance + nsepython for Indian market data
 - TA-Lib with custom fallbacks for technical detection
@@ -125,6 +126,12 @@ Implemented in `app/repository.py` and surfaced in the final recommendation.
 The pipeline is fully autonomous and sequential using LangGraph:
 
 - `app/graph.py` builds the 5-node `StateGraph` and returns the final recommendation.
+- When `OPENAI_API_KEY` is configured, `run_recommendation()` upgrades to a 4-step tool-using LLM agent path:
+  - signal detection agent
+  - context enrichment agent
+  - decision generation agent
+  - portfolio personalization agent
+- If the LLM path is unavailable or fails, the system falls back to the deterministic LangGraph flow.
 
 ## API and UI
 
@@ -134,9 +141,10 @@ Implemented in `app/main.py`.
 
 - `GET /health`
 - `GET /api/users`
-- `GET /signals`
+- `GET /signals` (backend-generated radar feed over the supported watchlist)
 - `GET /symbols/{symbol}/technicals`
 - `GET /memory/{symbol}` (query by `pattern_name`, `market_condition`, and `signal_stack`)
+- `GET /outcomes` (recent realized outcomes, optionally filtered by `symbol`)
 - `POST /analyze` (symbol + user_id -> full recommendation + `summary`)
 - `POST /outcomes` (record realized trade outcome and return updated memory snapshot)
 
@@ -376,6 +384,9 @@ Response body:
   - `sources.sector`
   - `sources.market`
   - `sources.technical`
+- Agent execution metadata:
+  - `execution_mode`
+  - `agent_trace[]`
 
 Frontend guidance:
 
@@ -405,10 +416,6 @@ Response:
 - `success_rate`
 - `avg_return_pct`
 - `source`
-
-Important limitation:
-
-- this endpoint does not accept `signal_stack`, so it cannot return exact-match memory scoped to a specific frontend-selected signal combination
 
 #### `POST /outcomes`
 
@@ -583,6 +590,17 @@ streamlit run streamlit_app.py
 See `.env.example`.
 
 If Supabase or NSE endpoints are unavailable, the app falls back to deterministic demo data and marks the source in the response.
+
+### Optional OpenAI Agent Mode
+
+Set these environment variables to enable tool-using LLM agents for `POST /analyze`:
+
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL` (default: `gpt-5-mini`)
+- `OPENAI_REASONING_EFFORT` (default: `medium`)
+- `OPENAI_AGENT_ENABLED` (default: `true`)
+
+In agent mode, the backend records an `agent_trace` showing each LLM step, the tools it called, and the summarized output of that step.
 
 ## Supabase Setup (Optional)
 

@@ -4,13 +4,14 @@ from fastapi import FastAPI, Query
 from pydantic import BaseModel
 
 from app.config import get_settings
-from app.data_sources import MarketDataService
 from app.graph import run_recommendation
+from app.llm_agents import run_signal_radar
+from app.data_sources import MarketDataService
 from app.repository import Repository
+from app.scheduler import lifespan
 
 
-app = FastAPI(title="AI Investor Agent", version="0.1.0")
-
+app = FastAPI(title="AI Investor Agent", version="0.1.0", lifespan=lifespan)
 
 class RecommendationRequest(BaseModel):
     symbol: str
@@ -32,6 +33,23 @@ class OutcomeRequest(BaseModel):
     outcome_label: str
     exit_reason: str | None = None
     is_stop_loss_hit: bool = False
+
+
+class OutcomeListItem(BaseModel):
+    id: int | str | None = None
+    user_id: str
+    symbol: str
+    pattern_name: str
+    action: str
+    market_condition: str
+    signal_stack: list[str]
+    entry_price: float
+    target_price: float
+    stop_loss: float
+    outcome_return_pct: float
+    outcome_horizon_days: int
+    outcome_label: str
+    created_at: str | None = None
 
 
 @app.get("/health")
@@ -58,45 +76,9 @@ def analyze(payload: RecommendationRequest) -> dict[str, object]:
 
 
 @app.get("/signals")
-def get_signals() -> list[dict[str, object]]:
-    return [
-        {
-            "id": "sig_tatasteel_pattern_start_20260326_1",
-            "symbol": "TATASTEEL",
-            "category": "technical",
-            "signal_type": "pattern_start",
-            "title": "Breakout setup forming",
-            "description": "Price is near prior 20-day high with rising volume.",
-            "confidence_pct": 72,
-            "detected_at": "2026-03-26T10:15:00+05:30",
-            "source": "yfinance / demo",
-            "is_demo": True
-        },
-        {
-            "id": "sig_infy_volume_breakout_20260326_1",
-            "symbol": "INFY",
-            "category": "technical",
-            "signal_type": "volume_breakout",
-            "title": "Delivery volume spike",
-            "description": "Delivery volume spiked 400% above 20-day average. Institutional accumulation pattern detected ahead of macro cycle shift.",
-            "confidence_pct": 85,
-            "detected_at": "2026-03-26T10:05:00+05:30",
-            "source": "nsepython / demo",
-            "is_demo": True
-        },
-        {
-            "id": "sig_reliance_oi_buildup_20260326_1",
-            "symbol": "RELIANCE",
-            "category": "derivatives",
-            "signal_type": "oi_buildup",
-            "title": "Aggressive put writing",
-            "description": "Aggressive put writing at current strike indicating strong structural floor. Correlates with historical multi-month bottoms.",
-            "confidence_pct": 68,
-            "detected_at": "2026-03-26T09:45:00+05:30",
-            "source": "nsepython / demo",
-            "is_demo": True
-        }
-    ]
+def get_signals(limit: int = 10) -> dict[str, object]:
+    radar = run_signal_radar(limit=limit)
+    return radar.model_dump()
 
 
 @app.get("/symbols/{symbol}/technicals")
@@ -123,6 +105,13 @@ def memory(
     return memory_snapshot.model_dump()
 
 
+@app.get("/outcomes")
+def list_outcomes(symbol: str | None = None, limit: int = 20) -> list[dict[str, object]]:
+    repo = Repository()
+    outcomes = repo.list_outcomes(symbol=symbol, limit=limit)
+    return [OutcomeListItem.model_validate(row).model_dump() for row in outcomes]
+
+
 @app.post("/outcomes")
 def record_outcome(payload: OutcomeRequest) -> dict[str, object]:
     repo = Repository()
@@ -137,3 +126,45 @@ def record_outcome(payload: OutcomeRequest) -> dict[str, object]:
         "stored_outcome": stored,
         "updated_memory": memory_snapshot.model_dump(),
     }
+
+
+class MonitorRequest(BaseModel):
+    user_id: str
+    interval_minutes: int = 60
+
+
+@app.post("/monitor/{symbol}")
+def add_monitor(symbol: str, payload: MonitorRequest) -> dict[str, object]:
+    """Add a symbol to the user's monitoring watchlist."""
+    repo = Repository()
+    entry = repo.add_monitored_symbol(payload.user_id, symbol, payload.interval_minutes)
+    return {"monitored": entry}
+
+
+@app.delete("/monitor/{symbol}")
+def remove_monitor(symbol: str, user_id: str) -> dict[str, object]:
+    """Remove a symbol from the user's monitoring watchlist."""
+    repo = Repository()
+    removed = repo.remove_monitored_symbol(user_id, symbol)
+    return {"removed": removed, "symbol": symbol.upper()}
+
+
+@app.get("/monitor")
+def list_monitors(user_id: str) -> dict[str, object]:
+    """List all monitored symbols for a user, with their latest scan results."""
+    repo = Repository()
+    entries = repo.list_monitored_symbols(user_id)
+    return {"monitored_symbols": entries}
+
+
+@app.post("/monitor/{symbol}/scan")
+def scan_now(symbol: str, payload: MonitorRequest) -> dict[str, object]:
+    """Trigger an immediate one-time scan for a symbol and store the result."""
+    repo = Repository()
+    # Ensure entry exists before scanning
+    repo.add_monitored_symbol(payload.user_id, symbol, payload.interval_minutes)
+    rec = run_recommendation(symbol, payload.user_id)
+    result_json = rec.model_dump(mode="json")
+    result_json["summary"] = rec.summary
+    repo.update_monitored_result(payload.user_id, symbol, result_json)
+    return {"symbol": symbol.upper(), "result": result_json}
