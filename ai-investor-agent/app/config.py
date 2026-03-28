@@ -10,8 +10,12 @@ class Settings(BaseSettings):
     supabase_db_url: str | None = None
     default_user_id: str = "user_default"
     default_symbol: str = "TATASTEEL"
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-flash-latest"
+    gemini_agent_enabled: bool = True
+    openai_max_tool_rounds: int = 6
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 
 @lru_cache(maxsize=1)
