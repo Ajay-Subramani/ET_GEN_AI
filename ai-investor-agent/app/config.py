@@ -10,6 +10,11 @@ class Settings(BaseSettings):
     supabase_db_url: str | None = None
     default_user_id: str = "user_default"
     default_symbol: str = "TATASTEEL"
+    # Ollama (text brain)
+    ollama_agent_enabled: bool = False
+    ollama_base_url: str = "http://127.0.0.1:11434"
+    ollama_text_model: str = "deepseek-r1:7b"
+    ollama_timeout_s: float = 20.0
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-flash-latest"
     gemini_agent_enabled: bool = True
