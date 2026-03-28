@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, UploadFile, File
 from pydantic import BaseModel
 
 from app.config import get_settings
 from app.graph import run_recommendation
-from app.llm_agents import run_signal_radar
+from app.llm_agents import run_signal_radar, GeminiToolAgent
 from app.data_sources import MarketDataService
 from app.repository import Repository
 from app.scheduler import lifespan
@@ -168,3 +168,33 @@ def scan_now(symbol: str, payload: MonitorRequest) -> dict[str, object]:
     result_json["summary"] = rec.summary
     repo.update_monitored_result(payload.user_id, symbol, result_json)
     return {"symbol": symbol.upper(), "result": result_json}
+@app.post("/api/portfolio/extract")
+async def extract_portfolio(
+    file: UploadFile = File(...), 
+    user_id: str = Form(..., description="The ID of the user for whom to update the portfolio.")
+) -> dict[str, object]:
+    """Extract stock holdings from a portfolio screenshot and update the user's portfolio."""
+    settings = get_settings()
+    if not settings.gemini_api_key:
+        raise HTTPException(
+            status_code=400, detail="Gemini API key is not configured. Cannot extract portfolio from image."
+        )
+
+    content = await file.read()
+    agent = GeminiToolAgent()
+    holdings = agent.extract_portfolio_from_image(content)
+    
+    # Update Supabase repository
+    repo = Repository()
+    
+    # user_id is now received directly from the form data
+    effective_user_id = user_id
+    
+    # Clear old holdings and add new ones (or merge)
+    # For simplicity, we replace with the detected ones
+    repo.update_portfolio_holdings(effective_user_id, holdings)
+    
+    return {
+        "extracted_holdings": holdings,
+        "message": f"Successfully extracted {len(holdings)} holdings and updated portfolio."
+    }
