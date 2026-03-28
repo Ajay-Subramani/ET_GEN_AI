@@ -1,17 +1,22 @@
 "use client";
 
 import { useEffect, useEffectEvent, useMemo, useState, useTransition } from "react";
+import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import Auth from "@/components/Auth";
 import type {
+  AgentStepTrace,
   HealthResponse,
   OutcomeLabel,
   OutcomeRequest,
   OutcomeResponse,
+  OutcomeHistoryItem,
   RecommendationResponse,
   RiskProfile,
+  SetupMemory,
   UserPortfolio,
   UsersResponse,
+  ActionType,
 } from "@/lib/ai-investor";
 
 const SYMBOLS = ["TATASTEEL", "RELIANCE", "HDFCBANK", "INFY", "SUNPHARMA"];
@@ -23,22 +28,28 @@ const RISK_OPTIONS: { label: string; value: RiskProfile }[] = [
 ];
 
 const ACTION_STYLES: Record<
-  RecommendationResponse["action"],
+  ActionType,
   { badge: string; accent: string; tone: string; eyebrow: string }
 > = {
-  BUY: {
+  "High Conviction Buy": {
+    badge: "bg-emerald-600 text-white shadow-lg shadow-emerald-200/50",
+    accent: "text-emerald-600",
+    tone: "bg-emerald-50 text-emerald-700",
+    eyebrow: "Elite Strategic Accumulation",
+  },
+  "Potential Buy": {
     badge: "bg-[color:var(--success)] text-white",
     accent: "text-[color:var(--success)]",
     tone: "bg-[rgba(6,95,70,0.1)] text-[color:var(--success)]",
     eyebrow: "Strategic Accumulation Triggered",
   },
-  WATCH: {
+  Watch: {
     badge: "bg-[color:var(--warning)] text-white",
     accent: "text-[color:var(--warning)]",
     tone: "bg-[rgba(146,64,14,0.12)] text-[color:var(--warning)]",
     eyebrow: "Monitor For Confirmation",
   },
-  AVOID: {
+  "Avoid / Exit": {
     badge: "bg-[color:var(--danger)] text-white",
     accent: "text-[color:var(--danger)]",
     tone: "bg-[rgba(127,29,29,0.12)] text-[color:var(--danger)]",
@@ -50,6 +61,29 @@ const DEFAULT_PORTFOLIO: UserPortfolio = {
   risk_profile: "moderate",
   total_capital: 0,
   holdings: [],
+};
+
+type RadarSignal = {
+  id: string;
+  symbol: string;
+  category: string;
+  signal_type: string;
+  description: string;
+  confidence_pct: number;
+  detected_at: string;
+  source: string;
+  is_demo?: boolean;
+  explanation?: string;
+  color?: string;
+  time?: string;
+  type?: string;
+  confidence?: number;
+};
+
+type RadarFeed = {
+  radar_summary: string;
+  signals: RadarSignal[];
+  agent_trace?: AgentStepTrace[];
 };
 
 function formatCurrency(value: number) {
@@ -103,7 +137,7 @@ export default function Home() {
     useState<RecommendationResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showOutcomeModal, setShowOutcomeModal] = useState(false);
-  const [session, setSession] = useState<any>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const [isAuthChecking, setIsAuthChecking] = useState(true);
   const [outcomeLabel, setOutcomeLabel] = useState<OutcomeLabel>("win");
   const [outcomeReturnPct, setOutcomeReturnPct] = useState("8.5");
@@ -256,7 +290,7 @@ export default function Home() {
 
   const activeStyles = recommendation
     ? ACTION_STYLES[recommendation.action]
-    : ACTION_STYLES.WATCH;
+    : ACTION_STYLES["Watch"];
 
   const supportingStats = [
     {
@@ -327,7 +361,7 @@ export default function Home() {
           ) : null}
 
           {activeTab === "Signals" && (
-            <SignalsRadarScreen onDeployAgent={deployAgentFromRadar} />
+            <SignalsRadarScreen userId={effectiveUserId} onDeployAgent={deployAgentFromRadar} />
           )}
 
           {activeTab === "Portfolio" && (
@@ -522,81 +556,286 @@ function SideBar({
   );
 }
 
-function SignalsRadarScreen({ onDeployAgent }: { onDeployAgent: (symbol: string) => void }) {
-  const [signals, setSignals] = useState<any[]>([]);
+function SignalsRadarScreen({ userId, onDeployAgent }: { userId: string; onDeployAgent: (symbol: string) => void }) {
+  const [feed, setFeed] = useState<RadarFeed | null>(null);
+  const [monitored, setMonitored] = useState<any[]>([]); // Monitored symbols
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshingMonitored, setIsRefreshingMonitored] = useState(false);
+  const [searchSymbol, setSearchSymbol] = useState("");
+  const [isProcessingSearch, setIsProcessingSearch] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchJson<any[]>("/api/signals")
+  const fetchSignals = () => {
+    setIsLoading(true);
+    fetchJson<RadarFeed>("/api/signals")
       .then((data) => {
-        setSignals(
-          data.map((s) => ({
+        setFeed({
+          ...data,
+          signals: data.signals.map((s) => ({
             ...s,
             color:
               s.confidence_pct >= 80
                 ? "var(--success)"
-                : s.confidence_pct >= 70
-                  ? "var(--primary)"
-                  : "var(--warning)",
+              : s.confidence_pct >= 70
+                ? "var(--primary)"
+                : "var(--warning)",
             time: new Date(s.detected_at).toLocaleTimeString("en-US", {
               hour: "2-digit",
               minute: "2-digit",
             }),
+            type: s.signal_type,
+            confidence: s.confidence_pct,
           })),
-        );
+        });
       })
       .finally(() => setIsLoading(false));
-  }, []);
+  };
+
+  const fetchMonitored = () => {
+    setIsRefreshingMonitored(true);
+    fetchJson<{ monitored_symbols: any[] }>(`/api/monitor?user_id=${userId}`)
+      .then(res => setMonitored(res.monitored_symbols))
+      .finally(() => setIsRefreshingMonitored(false));
+  };
+
+  useEffect(() => {
+    fetchSignals();
+    fetchMonitored();
+  }, [userId]);
+
+  const handleManualScan = (symbolToScan: string = searchSymbol) => {
+    if (!symbolToScan) return;
+    setIsProcessingSearch(true);
+    setSearchError(null);
+    fetchJson<any>(`/api/monitor/${symbolToScan.toUpperCase()}/scan`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ user_id: userId, interval_minutes: 60 })
+    })
+    .then(() => {
+      fetchMonitored();
+      setSearchSymbol("");
+    })
+    .catch(err => setSearchError(err.message))
+    .finally(() => setIsProcessingSearch(false));
+  };
+
+  const handleDeployAgent = (symbolToDeploy: string) => {
+    setIsProcessingSearch(true);
+    fetchJson<any>(`/api/monitor/${symbolToDeploy.toUpperCase()}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ user_id: userId, interval_minutes: 60 })
+    })
+    .then(() => {
+      fetchMonitored();
+      setSearchSymbol("");
+    })
+    .finally(() => setIsProcessingSearch(false));
+  };
+
+  const handleDeleteMonitor = (symbolToDelete: string) => {
+    fetchJson<any>(`/api/monitor/${symbolToDelete}?user_id=${userId}`, {
+      method: "DELETE"
+    })
+    .then(() => fetchMonitored());
+  };
+
+  const [showTrace, setShowTrace] = useState(false);
 
   return (
     <div className="mx-auto max-w-[1000px] px-6 py-12">
-      <div className="mb-10">
-        <h1 className="font-serif text-4xl mb-3">Opportunity Radar</h1>
+      <header className="mb-12">
+        <div className="flex items-center justify-between mb-3">
+          <h1 className="font-serif text-4xl">Opportunity Radar</h1>
+          <button 
+            onClick={() => setShowTrace(!showTrace)}
+            className="text-[10px] font-bold uppercase tracking-widest text-[color:var(--primary)] bg-[color:var(--surface-low)] px-3 py-1 rounded-full border border-[color:var(--primary)]/20"
+          >
+            {showTrace ? "Hide Agent Trace" : "View Live Agent Trace"}
+          </button>
+        </div>
         <p className="text-slate-500 max-w-2xl leading-relaxed">
-          The AI scans supported technical and market signals (e.g., volume breakouts, pattern starts) across the NSE. Anomalies are surfaced below. Deploy the agentic pipeline to autonomously synthesize a trading plan.
+          The Gemini Autonomous Agent scans the NSE for high-alpha signals. Deploy persistent monitoring or run a one-time deep scan below.
         </p>
-      </div>
 
-      {isLoading ? (
-        <div className="py-20 text-center text-slate-400">Scanning market for live signals...</div>
-      ) : (
-        <div className="space-y-6">
-        {signals.map((signal) => (
-          <div key={signal.id} className="bg-white rounded-[20px] p-6 editorial-shadow border border-slate-100 flex flex-col md:flex-row gap-6 md:items-center justify-between group hover:border-[color:var(--primary)]/30 transition-colors">
-            <div className="flex-1">
-              <div className="flex flex-wrap items-center gap-3 mb-3">
-                <span className="font-mono text-xl font-bold bg-slate-50 px-2 py-1 rounded">{signal.symbol}</span>
-                <span className="text-[10px] uppercase tracking-widest text-[color:var(--primary)] font-bold bg-[color:var(--surface-low)] px-3 py-1 rounded-full">{signal.category}</span>
-                <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold bg-slate-100 px-3 py-1 rounded-full">{signal.type}</span>
-                <span className="text-[10px] uppercase tracking-[0.2em] font-mono text-slate-400">{signal.time}</span>
-                <span className="text-[9px] uppercase tracking-widest text-slate-400 font-bold border border-slate-200 px-2 py-0.5 rounded ml-auto">SRC: {signal.source}</span>
-              </div>
-              <p className="text-sm text-slate-600 leading-relaxed pr-4">
-                {signal.description}
-              </p>
+        {/* Search Bar Section */}
+        <div className="mt-8 flex flex-col md:flex-row gap-4 items-stretch">
+          <div className="relative flex-1">
+            <div className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
             </div>
-            
-            <div className="flex flex-row md:flex-col items-center md:items-end gap-3 md:gap-4 md:pl-6 md:border-l border-slate-100 min-w-[180px]">
-               <div className="flex flex-col items-start md:items-end w-full">
-                 <span className="text-[10px] uppercase tracking-[0.2em] text-slate-400 mb-1">Signal Strength</span>
-                 <div className="flex items-center gap-2 w-full justify-end">
-                   <div className="h-2 flex-1 max-w-[80px] bg-slate-100 rounded-full overflow-hidden">
-                     <div className="h-full rounded-full" style={{ width: `${signal.confidence}%`, backgroundColor: signal.color }} />
-                   </div>
-                   <span className="font-mono text-sm font-bold w-10 text-right" style={{ color: signal.color }}>{signal.confidence}%</span>
-                 </div>
-               </div>
-               <button 
-                onClick={() => onDeployAgent(signal.symbol)}
-                className="ml-auto md:ml-0 w-full text-center bg-[color:var(--surface-low)] hover:bg-[color:var(--primary)] hover:text-white transition-all text-[color:var(--primary)] font-semibold text-xs uppercase tracking-widest px-6 py-3 rounded-xl border border-[color:var(--primary)]/10 hover:border-[color:var(--primary)]"
-               >
-                 Deploy Agent →
-               </button>
+            <input 
+              className="w-full rounded-2xl bg-white border-2 border-slate-100 hover:border-slate-200 pl-14 pr-5 py-5 font-mono text-xl uppercase outline-none focus:border-[color:var(--primary)]/50 focus:ring-4 focus:ring-[color:var(--primary)]/5 shadow-lg transition-all"
+              placeholder="Enter NSE Symbol..."
+              value={searchSymbol}
+              onChange={(e) => setSearchSymbol(e.target.value.toUpperCase())}
+              onKeyDown={(e) => e.key === 'Enter' && handleManualScan()}
+            />
+            {isProcessingSearch && (
+              <div className="absolute right-5 top-1/2 -translate-y-1/2">
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-[color:var(--primary)] border-t-transparent" />
+              </div>
+            )}
+          </div>
+          <button 
+            disabled={!searchSymbol || isProcessingSearch}
+            onClick={() => handleManualScan()}
+            className="rounded-2xl bg-[color:var(--primary)] px-8 py-5 font-bold text-white shadow-xl shadow-[color:var(--primary)]/20 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50"
+          >
+            Quick Scan
+          </button>
+          <button 
+            disabled={!searchSymbol || isProcessingSearch}
+            onClick={() => handleDeployAgent(searchSymbol)}
+            className="rounded-2xl bg-white border-2 border-[color:var(--primary)] px-8 py-5 font-bold text-[color:var(--primary)] hover:bg-slate-50 active:scale-[0.98] transition-all disabled:opacity-50"
+          >
+            Deploy Monitor
+          </button>
+        </div>
+        {searchError && (
+          <p className="mt-3 text-sm text-[color:var(--danger)]">{searchError}</p>
+        )}
+
+        {showTrace && feed?.agent_trace && (
+          <div className="mt-8 bg-slate-900 rounded-[24px] p-6 font-mono text-xs text-emerald-400/90 shadow-2xl overflow-hidden border border-slate-800">
+            <div className="flex items-center justify-between mb-4 border-b border-slate-800 pb-4">
+              <span className="text-slate-500 uppercase tracking-widest font-bold">Autonomous Agent Trace (Live)</span>
+              <span className="text-[10px] bg-emerald-500/10 text-emerald-500 px-2 py-0.5 rounded">Running Gemini 1.5 Flash</span>
+            </div>
+            <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+              {feed.agent_trace.map((step, idx) => (
+                <div key={idx} className="border-l-2 border-slate-800 pl-4 py-1">
+                  <div className="text-emerald-500 font-bold mb-1">[{step.step_name}] {step.objective}</div>
+                  <div className="text-slate-400 italic mb-2">"{step.thought}"</div>
+                  <div className="space-y-1">
+                    {step.tool_calls.map((tool, tIdx) => (
+                      <div key={tIdx} className="flex gap-2">
+                        <span className="text-slate-600">→</span>
+                        <span className="text-sky-400">CALL: {tool.tool_name}</span>
+                        <span className="text-slate-500">({JSON.stringify(tool.arguments)})</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
-        ))}
-      </div>
-      )}
+        )}
+      </header>
+
+      {/* Monitored Symbols Section */}
+      <section className="mb-16">
+        <div className="mb-6 flex items-center justify-between">
+          <h2 className="font-serif text-2xl font-bold">Monitored Watchlist</h2>
+          <button onClick={fetchMonitored} className="text-xs font-bold uppercase tracking-widest text-slate-400 hover:text-[color:var(--primary)] transition-colors">
+            {isRefreshingMonitored ? "Syncing..." : "Refresh Watchlist"}
+          </button>
+        </div>
+        
+        {monitored.length === 0 ? (
+          <div className="rounded-[24px] border-2 border-dashed border-slate-200 p-12 text-center bg-slate-50/50 text-slate-400 italic">
+            No active agents deployed. Search a symbol above to start monitoring.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {monitored.map((m) => {
+              const res = m.latest_result;
+              const styles = res ? ACTION_STYLES[res.action as ActionType] : ACTION_STYLES["Watch"];
+              return (
+                <div key={m.id} className="bg-white rounded-[24px] p-6 border border-slate-100 shadow-sm hover:shadow-md transition-shadow relative group">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <span className="font-mono text-xl font-bold">{m.symbol}</span>
+                      {res && (
+                        <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full ${styles.tone}`}>
+                          {res.action}
+                        </span>
+                      )}
+                    </div>
+                    <button 
+                      onClick={() => handleDeleteMonitor(m.symbol)}
+                      className="opacity-0 group-hover:opacity-100 p-2 text-slate-400 hover:text-[color:var(--danger)] transition-all"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  {res ? (
+                    <div className="mb-4">
+                      <p className="text-sm text-slate-600 line-clamp-2 mb-2">{res.summary}</p>
+                      <div className="flex items-center gap-4 text-xs font-mono">
+                        <div className="text-emerald-600 font-bold">Tg: {formatCurrency(res.target_price)}</div>
+                        <div className="text-red-600 font-bold">SL: {formatCurrency(res.stop_loss)}</div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mb-4 py-2 text-sm text-slate-400 italic">Waiting for first scan...</div>
+                  )}
+
+                  <div className="pt-4 border-t border-slate-50 flex items-center justify-between text-[10px] font-bold uppercase tracking-widest">
+                    <span className="text-slate-400">Interval: {m.interval_minutes}m</span>
+                    <button 
+                      onClick={() => handleManualScan(m.symbol)}
+                      className="text-[color:var(--primary)] hover:underline"
+                    >
+                      Scan Now →
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* Live Radar Feed Section */}
+      <section>
+        <div className="mb-6 flex items-center justify-between">
+          <h2 className="font-serif text-2xl font-bold">Global Market Signals</h2>
+          <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">Auto-updates from NSE</span>
+        </div>
+
+        {isLoading ? (
+          <div className="py-20 text-center text-slate-400">Scanning market for live signals...</div>
+        ) : (
+          <div className="space-y-6">
+            {feed?.signals.map((signal) => (
+              <div key={signal.id} className="bg-white rounded-[20px] p-6 editorial-shadow border border-slate-100 flex flex-col md:flex-row gap-6 md:items-center justify-between group hover:border-[color:var(--primary)]/30 transition-colors">
+                <div className="flex-1">
+                  <div className="flex flex-wrap items-center gap-3 mb-3">
+                    <span className="font-mono text-xl font-bold bg-slate-50 px-2 py-1 rounded">{signal.symbol}</span>
+                    <span className="text-[10px] uppercase tracking-widest text-[color:var(--primary)] font-bold bg-[color:var(--surface-low)] px-3 py-1 rounded-full">{signal.category}</span>
+                    <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold bg-slate-100 px-3 py-1 rounded-full">{signal.type}</span>
+                    <span className="text-[10px] uppercase tracking-[0.2em] font-mono text-slate-400">{signal.time}</span>
+                  </div>
+                  <p className="text-sm text-slate-600 leading-relaxed pr-4">
+                    {signal.description}
+                  </p>
+                </div>
+                
+                <div className="flex flex-row md:flex-col items-center md:items-end gap-3 md:gap-4 md:pl-6 md:border-l border-slate-100 min-w-[180px]">
+                   <div className="flex flex-col items-start md:items-end w-full">
+                     <span className="text-[10px] uppercase tracking-[0.2em] text-slate-400 mb-1">Signal Strength</span>
+                     <div className="flex items-center gap-2 w-full justify-end">
+                       <div className="h-2 flex-1 max-w-[80px] bg-slate-100 rounded-full overflow-hidden">
+                         <div className="h-full rounded-full" style={{ width: `${signal.confidence}%`, backgroundColor: signal.color }} />
+                       </div>
+                       <span className="font-mono text-sm font-bold w-10 text-right" style={{ color: signal.color }}>{signal.confidence}%</span>
+                     </div>
+                   </div>
+                   <button 
+                    onClick={() => handleDeployAgent(signal.symbol)}
+                    className="ml-auto md:ml-0 w-full text-center bg-[color:var(--surface-low)] hover:bg-[color:var(--primary)] hover:text-white transition-all text-[color:var(--primary)] font-semibold text-xs uppercase tracking-widest px-6 py-3 rounded-xl border border-[color:var(--primary)]/10 hover:border-[color:var(--primary)]"
+                   >
+                     Deploy Agent →
+                   </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
@@ -610,7 +849,7 @@ function PortfolioScreen({ portfolio }: { portfolio: UserPortfolio }) {
         <div>
           <div className="flex items-center gap-3 mb-3">
             <h1 className="font-serif text-4xl">Institutional Portfolio</h1>
-            <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold bg-slate-100 px-2 py-0.5 rounded border border-slate-200">SRC: DEMO BACKED</span>
+            <span className="text-[10px] uppercase tracking-widest text-emerald-500 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100">SRC: GEMINI AGENT</span>
           </div>
           <p className="text-slate-500 max-w-2xl leading-relaxed">
             Personalized context used by the AI Agent for trade sizing and risk management. High-conviction signals are scaled based on your current sector exposure and liquidity.
@@ -666,7 +905,7 @@ function PortfolioScreen({ portfolio }: { portfolio: UserPortfolio }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {holdings.length > 0 ? holdings.map((asset: any, i: number) => (
+              {holdings.length > 0 ? holdings.map((asset, i: number) => (
                 <tr key={i} className="group hover:bg-slate-50/50 transition-colors">
                   <td className="px-8 py-6">
                     <div className="font-mono text-lg font-bold">{asset.symbol}</div>
@@ -698,21 +937,21 @@ function PortfolioScreen({ portfolio }: { portfolio: UserPortfolio }) {
 }
 
 function MemoryScreen() {
-  const [memory, setMemory] = useState<any>(null);
+  const [memory, setMemory] = useState<SetupMemory | null>(null);
+  const [history, setHistory] = useState<OutcomeHistoryItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    fetchJson<any>("/api/memory?symbol=TATASTEEL&pattern_name=breakout")
-      .then(setMemory)
+    Promise.all([
+      fetchJson<SetupMemory>("/api/memory?symbol=TATASTEEL&pattern_name=breakout"),
+      fetchJson<OutcomeHistoryItem[]>("/api/outcomes?symbol=TATASTEEL&limit=10"),
+    ])
+      .then(([memoryResponse, historyResponse]) => {
+        setMemory(memoryResponse);
+        setHistory(historyResponse);
+      })
       .finally(() => setIsLoading(false));
   }, []);
-
-  const history = [
-    { symbol: "RELIANCE", pattern: "Mean Reversion", date: "2 days ago", outcome: "WIN", return: 4.2, status: "Verified" },
-    { symbol: "ZOMATO", pattern: "Volume Breakout", date: "5 days ago", outcome: "WIN", return: 8.7, status: "Verified" },
-    { symbol: "WIPRO", pattern: "Structural Alignment", date: "1 week ago", outcome: "LOSS", return: -2.1, status: "Verified" },
-    { symbol: "HDFCBANK", pattern: "Options Floor", date: "10 days ago", outcome: "WIN", return: 3.5, status: "Verified" },
-  ];
 
   if (isLoading || !memory) {
      return <div className="py-20 text-center text-slate-400">Loading pattern memory...</div>;
@@ -763,23 +1002,23 @@ function MemoryScreen() {
             </thead>
             <tbody className="divide-y divide-slate-50">
               {history.map((record, i) => (
-                <tr key={i} className="hover:bg-slate-50/50 transition-colors">
+                <tr key={record.id ?? i} className="hover:bg-slate-50/50 transition-colors">
                   <td className="px-8 py-6">
                     <div className="font-mono font-bold">{record.symbol}</div>
                   </td>
                   <td className="px-8 py-6">
-                    <div className="text-sm font-medium text-slate-700">{record.pattern}</div>
+                    <div className="text-sm font-medium text-slate-700">{record.pattern_name.replaceAll("_", " ")}</div>
                   </td>
                   <td className="px-8 py-6">
-                    <div className="text-xs text-slate-500 font-mono uppercase">{record.date}</div>
+                    <div className="text-xs text-slate-500 font-mono uppercase">{record.created_at ?? "n/a"}</div>
                   </td>
                   <td className="px-8 py-6">
-                    <span className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1 rounded-full ${record.outcome === 'WIN' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
-                      {record.outcome}
+                    <span className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1 rounded-full ${record.outcome_label === 'win' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
+                      {record.outcome_label}
                     </span>
                   </td>
-                  <td className={`px-8 py-6 text-right font-mono font-bold ${record.return > 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                    {record.return > 0 ? '+' : ''}{record.return}%
+                  <td className={`px-8 py-6 text-right font-mono font-bold ${record.outcome_return_pct > 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                    {record.outcome_return_pct > 0 ? '+' : ''}{record.outcome_return_pct}%
                   </td>
                 </tr>
               ))}
@@ -1106,6 +1345,12 @@ function ResultsScreen({
               SRC: {recommendation.sources.market.toUpperCase()}
             </span>
           </div>
+          <span className="text-slate-300">|</span>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] uppercase tracking-widest text-slate-600 font-bold bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+              MODE: {(recommendation.execution_mode ?? "heuristic").replaceAll("_", " ")}
+            </span>
+          </div>
         </div>
         <div className="font-mono text-xs text-slate-500">
           Last Computed: {latestComputedAt}
@@ -1149,17 +1394,17 @@ function ResultsScreen({
                   System Confidence
                 </span>
                 <span className="font-mono font-bold text-[color:var(--primary)]">
-                  {formatPercent(recommendation.confidence_pct)}
+                  {formatPercent(recommendation.confidence_score * 100)}
                 </span>
               </div>
               <div className="h-2 overflow-hidden rounded-full bg-[color:var(--surface-high)]">
                 <div
                    className="h-full transition-all duration-500"
                    style={{ 
-                     width: `${recommendation.confidence_pct}%`,
-                     backgroundColor: recommendation.confidence_pct < 30 
+                     width: `${recommendation.confidence_score * 100}%`,
+                     backgroundColor: recommendation.confidence_score < 0.3 
                        ? 'var(--danger)' 
-                       : recommendation.confidence_pct < 60 
+                       : recommendation.confidence_score < 0.6 
                          ? 'var(--warning)' 
                          : 'var(--primary)'
                    }}
@@ -1168,7 +1413,7 @@ function ResultsScreen({
             </div>
           </section>
 
-          {recommendation.action !== "AVOID" && recommendation.confidence_pct >= 30 ? (
+          {recommendation.action !== "Avoid / Exit" && recommendation.confidence_score >= 0.3 ? (
             <section className="editorial-shadow rounded-[20px] bg-white p-8">
               <h3 className="mb-6 text-xs uppercase tracking-[0.28em] text-slate-500">
                 Execution Plan
@@ -1210,12 +1455,18 @@ function ResultsScreen({
           ) : (
             <section className="rounded-[20px] border-2 border-dashed border-[color:var(--outline-variant)]/30 p-8 text-center bg-slate-50/30">
               <p className="font-serif text-xl italic text-slate-500">
-                {recommendation.action === "AVOID" 
+                {recommendation.action === "Avoid / Exit" 
                   ? "Execution plan suppressed. System recommends capital preservation." 
                   : "Execution plan hidden due to low structural confidence (< 30%). Wait for stronger alignment."}
               </p>
             </section>
           )}
+
+          <section className="rounded-[20px] bg-[color:var(--surface-low)] p-8">
+            {recommendation.agent_trace && recommendation.agent_trace.length > 0 ? (
+              <AgentTracePanel trace={recommendation.agent_trace} />
+            ) : null}
+          </section>
 
           <section className="rounded-[20px] bg-[color:var(--surface-low)] p-8">
             <div className="mb-4 flex items-center gap-3">
@@ -1290,14 +1541,6 @@ function ResultsScreen({
                 value={recommendation.setup_memory.similar_setups > 0 
                   ? formatPercent(recommendation.setup_memory.avg_return_pct)
                   : "N/A"}
-              />
-              <MetricCard
-                label="Target Hits"
-                value={String(recommendation.setup_memory.target_hits)}
-              />
-              <MetricCard
-                label="Stop-Loss Hits"
-                value={String(recommendation.setup_memory.stop_loss_hits)}
               />
               <MetricCard
                 label="Market Regime"
@@ -1432,6 +1675,48 @@ function SignalList({
         ))}
       </ul>
     </div>
+  );
+}
+
+function AgentTracePanel({ trace }: { trace: AgentStepTrace[] }) {
+  return (
+    <>
+      <div className="mb-6 flex items-center justify-between gap-4">
+        <div>
+          <h3 className="text-xs uppercase tracking-[0.26em] text-slate-500">Autonomous Agent Trace</h3>
+          <p className="mt-1 font-serif text-2xl font-bold">LLM brains with tools, step by step</p>
+        </div>
+      </div>
+      <div className="space-y-4">
+        {trace.map((step, index) => (
+          <article className="rounded-[18px] border border-[color:var(--outline-variant)]/15 bg-white p-5" key={`${step.step_name}-${index}`}>
+            <div className="mb-3 flex flex-wrap items-center gap-3">
+              <span className="rounded-full bg-[color:var(--surface-low)] px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-[color:var(--primary)]">
+                Step {index + 1}
+              </span>
+              <span className="font-mono text-sm uppercase tracking-[0.18em] text-slate-500">{step.step_name.replaceAll("_", " ")}</span>
+              <span className="text-[10px] uppercase tracking-[0.2em] text-slate-400">{step.model}</span>
+            </div>
+            <p className="mb-3 text-sm text-slate-600">{step.objective}</p>
+            {step.thought && <p className="mb-3 text-xs italic text-slate-500 bg-slate-50/50 p-3 rounded-xl border border-dashed border-slate-200">"{step.thought}"</p>}
+            <p className="rounded-2xl bg-[color:var(--surface-low)] px-4 py-3 text-sm leading-7 text-slate-700">{step.output_summary}</p>
+            {step.tool_calls.length > 0 ? (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {step.tool_calls.map((call) => (
+                  <span
+                    className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500"
+                    key={`${step.step_name}-${call.tool_name}-${JSON.stringify(call.arguments)}`}
+                    title={call.output_preview}
+                  >
+                    {call.tool_name}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+          </article>
+        ))}
+      </div>
+    </>
   );
 }
 

@@ -1,7 +1,6 @@
 export type RiskProfile = "aggressive" | "moderate" | "conservative";
-export type ActionType = "BUY" | "WATCH" | "AVOID";
+export type ActionType = "High Conviction Buy" | "Potential Buy" | "Watch" | "Avoid / Exit";
 export type OutcomeLabel = "win" | "loss" | "neutral";
-
 export interface PortfolioHolding {
   symbol: string;
   quantity: number;
@@ -30,16 +29,29 @@ export interface SetupMemory {
   exact_matches: number;
   success_rate: number;
   avg_return_pct: number;
-  target_hits: number;
-  stop_loss_hits: number;
   source: string;
+}
+
+export interface AgentToolTrace {
+  tool_name: string;
+  arguments: Record<string, unknown>;
+  output_preview: string;
+}
+
+export interface AgentStepTrace {
+  step_name: string;
+  objective: string;
+  thought: string;
+  model: string;
+  tool_calls: AgentToolTrace[];
+  output_summary: string;
 }
 
 export interface RecommendationResponse {
   symbol: string;
   user_id: string;
   action: ActionType;
-  confidence_pct: number;
+  confidence_score: number;
   conviction_mode: string;
   confidence_note: string;
   entry_price: number;
@@ -63,6 +75,8 @@ export interface RecommendationResponse {
     market: string;
     technical: string;
   };
+  execution_mode?: string;
+  agent_trace?: AgentStepTrace[];
   summary: string;
 }
 
@@ -84,6 +98,11 @@ export interface OutcomeRequest {
 export interface OutcomeResponse {
   stored_outcome: OutcomeRequest;
   updated_memory: SetupMemory;
+}
+
+export interface OutcomeHistoryItem extends OutcomeRequest {
+  id?: number | string | null;
+  created_at?: string | null;
 }
 
 export interface HealthResponse {
