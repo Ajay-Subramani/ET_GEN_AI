@@ -3,10 +3,12 @@ from __future__ import annotations
 from math import isfinite
 
 from app.data_sources import MarketDataService
+from app.detectors.fundamental import get_fundamental_signals, get_fundamental_context
 from app.models import (
     AgentState,
     Decision,
     EnrichedContext,
+    FundamentalContext,
     FinalRecommendation,
     HistoricalContext,
     MarketContext,
@@ -33,45 +35,45 @@ class AnalystNodes:
         indicators = self.market.compute_pattern_indicators(history)
 
         signals: list[Signal] = []
-        total_score = 0
+        total_score = 0.0
 
         deals, deal_source = self.market.get_bulk_deals(symbol)
         big_deal = next((deal for deal in deals if float(deal.get("deal_value_cr", 0)) > 10), None)
         if big_deal:
             signals.append(
                 Signal(
-                    type="bulk_deal",
-                    weight=2,
-                    details=f"{big_deal['buyer']} bought Rs {big_deal['deal_value_cr']:.2f}cr",
+                    signal_type="Block/Bulk Deal",
+                    strength_score=0.7,
+                    short_explanation=f"{big_deal['buyer']} bought Rs {big_deal['deal_value_cr']:.2f}cr",
                     source=deal_source,
                 )
             )
-            total_score += 2
+            total_score += 0.7
 
         delivery_pct, avg_delivery_pct, delivery_source = self.market.get_delivery_pct(symbol, history)
         if delivery_pct > 60 and delivery_pct > avg_delivery_pct * 1.5:
             signals.append(
                 Signal(
-                    type="delivery_spike",
-                    weight=2,
-                    details=f"{delivery_pct:.0f}% delivery vs {avg_delivery_pct:.0f}% avg",
+                    signal_type="Delivery Spike",
+                    strength_score=0.6,
+                    short_explanation=f"{delivery_pct:.0f}% delivery vs {avg_delivery_pct:.0f}% avg",
                     source=delivery_source,
                 )
             )
-            total_score += 2
+            total_score += 0.6
 
         current_volume = float(history["volume"].iloc[-1]) if not history.empty else 0.0
         avg_volume = indicators.get("20d_vol_avg", 0.0)
         if avg_volume and current_volume > avg_volume * 2:
             signals.append(
                 Signal(
-                    type="volume_breakout",
-                    weight=2,
-                    details=f"{current_volume / avg_volume:.1f}x 20-day average volume",
+                    signal_type="Volume Breakout",
+                    strength_score=0.8,
+                    short_explanation=f"{current_volume / avg_volume:.1f}x 20-day average volume",
                     source=history_result.source,
                 )
             )
-            total_score += 2
+            total_score += 0.8
 
         stock_meta = self.repo.get_stock(symbol)
         current_price = float(history["close"].iloc[-1]) if not history.empty else 0.0
@@ -80,25 +82,30 @@ class AnalystNodes:
             if oi_support and oi_support >= current_price * 0.9:
                 signals.append(
                     Signal(
-                        type="oi_buildup",
-                        weight=2,
-                        details=f"Put OI support near Rs {oi_support:.2f}",
+                        signal_type="OI Buildup",
+                        strength_score=0.6,
+                        short_explanation=f"Put OI support near Rs {oi_support:.2f}",
                         source=oi_source,
                     )
                 )
-                total_score += 2
+                total_score += 0.6
 
         breakout_level = indicators.get("prev_20d_high") or indicators.get("20d_high")
         if breakout_level and current_price >= breakout_level * 0.985:
             signals.append(
                 Signal(
-                    type="pattern_start",
-                    weight=2,
-                    details=f"Price at Rs {current_price:.2f} approaching breakout level Rs {breakout_level:.2f}",
+                    signal_type="Pattern Start",
+                    strength_score=0.7,
+                    short_explanation=f"Price at Rs {current_price:.2f} approaching breakout level Rs {breakout_level:.2f}",
                     source=history_result.source,
                 )
             )
-            total_score += 2
+            total_score += 0.7
+
+        fund_signals = get_fundamental_signals(symbol)
+        for fs in fund_signals:
+            signals.append(Signal(**fs))
+            total_score += fs["strength_score"]
 
         state["signal_bundle"] = SignalBundle(symbol=symbol, signals=signals, total_score=total_score)
         return state
@@ -109,13 +116,14 @@ class AnalystNodes:
         history = self.repo.get_pattern_success(symbol, "breakout")
         market = self.market.get_market_breadth()
         sector = self.market.get_sector_snapshot(stock_meta["sector"])
+        fund_context_dict = get_fundamental_context(symbol)
 
         state["context"] = EnrichedContext(
             historical=HistoricalContext(
                 similar_setups=int(history["total_occurrences"]),
                 success_rate=float(history["success_rate"]),
                 avg_return_pct=float(history["avg_return_pct"]),
-                source="supabase" if self.repo.is_configured else "none",
+                source="supabase" if self.repo.is_configured else str(history.get("source", "demo")),
             ),
             sector=SectorContext(
                 trend=sector["trend"],
@@ -130,6 +138,7 @@ class AnalystNodes:
                 volatility_regime=market["volatility_regime"],
                 source=market["source"],
             ),
+            fundamental=FundamentalContext(**fund_context_dict),
         )
         return state
 
@@ -195,13 +204,13 @@ class AnalystNodes:
                 oi_support=oi_support,
                 risk_reward_ratio=risk_reward,
                 details=details + (f"; option OI support at Rs {oi_support:.2f}" if oi_support else ""),
-                source="supabase+technical" if self.repo.is_configured else f"failed+{oi_source}",
+                source="supabase+technical" if self.repo.is_configured else f"demo+{oi_source}",
             ),
             entry_price=current_price,
             target_price=target_price,
             stop_loss=stop_loss,
         )
-        signal_types = [signal.type for signal in state["signal_bundle"].signals]
+        signal_types = [signal.signal_type for signal in state["signal_bundle"].signals]
         state["setup_memory"] = self.repo.get_setup_memory(
             symbol=symbol,
             pattern_name=pattern_name,
@@ -220,15 +229,26 @@ class AnalystNodes:
                 symbol=state["symbol"],
                 pattern_name=technicals.pattern.name,
                 market_condition=context.market.condition,
-                signal_stack=[signal.type for signal in signal_bundle.signals],
+                signal_stack=[signal.signal_type for signal in signal_bundle.signals],
             ),
         )
 
-        signal_score = signal_bundle.total_score / signal_bundle.max_score
+        fund = context.fundamental
+        fundamental_score = 0.5
+        if fund:
+            if fund.revenue_growth and fund.revenue_growth > 10: fundamental_score += 0.2
+            if fund.pe_ratio and fund.pe_ratio < 30: fundamental_score += 0.1
+            if fund.roce and fund.roce > 15: fundamental_score += 0.2
+            if fund.debt_to_equity is not None and fund.debt_to_equity < 1.0: fundamental_score += 0.1
+            if fund.profit_growth is not None and fund.profit_growth > 10: fundamental_score += 0.1
+        fundamental_score = min(1.0, fundamental_score)
+
+        signal_score = min(1.0, signal_bundle.total_score / 3.0) # Assume 3 max aligned
         context_score = (
-            context.historical.success_rate * 0.6
+            context.historical.success_rate * 0.4
             + context.sector.strength * 0.2
             + min(context.market.breadth / 2, 1.0) * 0.2
+            + fundamental_score * 0.2
         )
         technical_score = (technicals.pattern.success_rate * 0.6) + (setup_memory.success_rate * 0.4)
         if technicals.pattern.risk_reward_ratio >= 2:
@@ -236,52 +256,51 @@ class AnalystNodes:
         if technicals.pattern.detected:
             technical_score = min(1.0, technical_score + 0.05)
 
-        strong_signal_count = sum(1 for signal in signal_bundle.signals if signal.weight >= 2)
+        strong_signal_count = sum(1 for signal in signal_bundle.signals if signal.strength_score >= 0.7)
         aligned_market = context.sector.trend == "bullish" or context.market.condition == "risk_on"
         historical_edge = context.historical.success_rate >= 0.65
         technical_edge = technicals.pattern.detected or technicals.pattern.risk_reward_ratio >= 2
+        
         if setup_memory.exact_matches >= 10 and setup_memory.success_rate >= 0.65:
             technical_score = min(1.0, technical_score + 0.05)
 
-        if strong_signal_count >= 4 and aligned_market and historical_edge and technical_edge and setup_memory.exact_matches >= 5:
+        if strong_signal_count >= 2 and aligned_market and historical_edge and technical_edge:
             conviction_mode = "HIGH_CONVICTION"
             confidence_bonus = 0.10
-            confidence_note = "Confidence is high because signals, historical edge, technical structure, and market regime all align."
-        elif strong_signal_count >= 3 and (aligned_market or historical_edge):
+            confidence_note = "High conviction due to extreme alignment between signals and structural edge."
+        elif strong_signal_count >= 1 and (aligned_market or historical_edge):
             conviction_mode = "ALIGNED"
             confidence_bonus = 0.05
-            confidence_note = "Confidence is constructive because multiple layers align, but the setup still needs confirmation."
+            confidence_note = "Constructive evidence from multiple signals but waiting for further breakdown/breakout confirmation."
         else:
             conviction_mode = "NORMAL"
             confidence_bonus = 0.0
-            confidence_note = "Confidence is measured because the setup is only partially aligned."
+            confidence_note = "Weak composite signal setup."
 
-        confidence = (signal_score * 0.4) + (context_score * 0.3) + (technical_score * 0.3)
+        confidence = (signal_score * 0.3) + (context_score * 0.4) + (technical_score * 0.3)
         confidence = min(0.99, confidence + confidence_bonus)
         confidence = round(confidence, 2)
 
-        if confidence >= 0.8:
-            action = "BUY"
-        elif confidence >= 0.6:
-            action = "WATCH"
+        if confidence >= 0.85 and technical_score >= 0.8 and fundamental_score >= 0.8:
+            action = "High Conviction Buy"
+        elif confidence >= 0.70 and (technical_score >= 0.6 or fundamental_score >= 0.7):
+            action = "Potential Buy"
+        elif confidence >= 0.55:
+            action = "Watch"
         else:
-            action = "AVOID"
+            action = "Avoid / Exit"
 
-        lead_signal_text = ", ".join(signal.details for signal in signal_bundle.signals[:3]) or "signal stack is weak"
+        lead_signal_text = ", ".join(f"{s.signal_type} ({s.short_explanation})" for s in signal_bundle.signals[:3]) or "No strong signals detected"
         reasons = [
-            lead_signal_text,
+            f"Signals: {lead_signal_text}",
             (
-                f"{technicals.pattern.name} historically succeeded "
+                f"Historical: {technicals.pattern.name} succeeded "
                 f"{technicals.pattern.success_rate * 100:.0f}% with avg {technicals.pattern.avg_return_pct:.1f}% return"
             ),
-            setup_memory.narrative,
-            f"sector trend is {context.sector.trend} and market is {context.market.condition}",
+            f"Memory: {setup_memory.narrative}",
+            f"Context: Sector trend is {context.sector.trend} and market is {context.market.condition}",
         ]
-        analyst_note = (
-            f"{signal_bundle.symbol} is showing {strong_signal_count} aligned signals: {lead_signal_text}. "
-            f"Pattern memory reveals {setup_memory.narrative}. "
-            f"{confidence_note}"
-        )
+        analyst_note = f"Identified {strong_signal_count} structural signals. The combination yields an action of {action}. "
         confirmation_triggers = [
             f"Breakout sustains above Rs {technicals.pattern.resistance:.2f}" if technicals.pattern.resistance else "Price confirms breakout",
             "Volume remains above the recent 20-day average",
@@ -300,7 +319,7 @@ class AnalystNodes:
 
         state["decision"] = Decision(
             action=action,
-            confidence=confidence,
+            confidence_score=confidence,
             conviction_mode=conviction_mode,
             confidence_note=confidence_note,
             entry_price=technicals.entry_price,
@@ -341,15 +360,26 @@ class AnalystNodes:
             adjusted_allocation *= 0.5
             warning = f"Sector exposure already high at {sector_exposure_pct * 100:.1f}% in {stock_meta['sector']}"
 
-        if decision.action == "WATCH":
+        risky_fundamentals = False
+        if decision.action != "Avoid / Exit":
+            fund = state["context"].fundamental
+            if fund.pe_ratio and fund.pe_ratio > 50: risky_fundamentals = True
+            if fund.debt_to_equity and fund.debt_to_equity > 2.0: risky_fundamentals = True
+            
+            if risky_fundamentals and sector_exposure_pct > 0.20:
+                warning = f"High exposure to {stock_meta['sector']} combined with risky internal fundamentals (e.g. high PE/Debt). Reducing allocation."
+                adjusted_allocation *= 0.25
+        
+        if decision.action == "Watch":
             adjusted_allocation *= 0.4
-        elif decision.action == "AVOID":
+        elif decision.action == "Avoid / Exit":
             adjusted_allocation = 0.0
 
         next_step = {
-            "BUY": f"Place staggered entries near Rs {decision.entry_price:.2f} and trail stop at Rs {decision.stop_loss:.2f}",
-            "WATCH": f"Add to watchlist and trigger review only on breakout above Rs {decision.entry_price * 1.01:.2f}",
-            "AVOID": "Skip for now and re-scan after new signals emerge",
+            "High Conviction Buy": f"Execute full allocation near Rs {decision.entry_price:.2f}. Strong fundamental and technical alignment.",
+            "Potential Buy": f"Place staggered entries near Rs {decision.entry_price:.2f} and trail stop at Rs {decision.stop_loss:.2f}",
+            "Watch": f"Add to watchlist and trigger review only on breakout above Rs {decision.entry_price * 1.01:.2f}",
+            "Avoid / Exit": "Skip for now and re-scan after new signals emerge",
         }[decision.action]
 
         state["personalization"] = Personalization(
@@ -364,7 +394,7 @@ class AnalystNodes:
             symbol=symbol,
             user_id=user_id,
             action=decision.action,
-            confidence_pct=decision.confidence * 100,
+            confidence_score=decision.confidence_score,
             conviction_mode=decision.conviction_mode,
             confidence_note=decision.confidence_note,
             entry_price=decision.entry_price,
@@ -388,5 +418,6 @@ class AnalystNodes:
                 "market": state["context"].market.source,
                 "technical": state["technicals"].pattern.source,
             },
+            execution_mode="heuristic",
         )
         return state

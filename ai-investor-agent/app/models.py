@@ -6,17 +6,17 @@ from pydantic import BaseModel, Field
 
 
 class Signal(BaseModel):
-    type: str
-    weight: int
-    details: str
+    signal_type: str
+    strength_score: float
+    short_explanation: str
     source: str = "live"
 
 
 class SignalBundle(BaseModel):
     symbol: str
     signals: list[Signal] = Field(default_factory=list)
-    total_score: int = 0
-    max_score: int = 10
+    total_score: float = 0.0
+    max_score: float = 1.0
 
 
 class HistoricalContext(BaseModel):
@@ -41,10 +41,22 @@ class MarketContext(BaseModel):
     source: str = "none"
 
 
+class FundamentalContext(BaseModel):
+    pe_ratio: float | None = None
+    roce: float | None = None
+    roe: float | None = None
+    debt_to_equity: float | None = None
+    revenue_growth: float | None = None
+    profit_growth: float | None = None
+    operating_margin: float | None = None
+    source: str = "none"
+
+
 class EnrichedContext(BaseModel):
     historical: HistoricalContext
     sector: SectorContext
     market: MarketContext
+    fundamental: FundamentalContext = Field(default_factory=FundamentalContext)
 
 
 class TechnicalPattern(BaseModel):
@@ -94,8 +106,8 @@ class SetupMemory(BaseModel):
 
 
 class Decision(BaseModel):
-    action: Literal["BUY", "WATCH", "AVOID"]
-    confidence: float
+    action: Literal["High Conviction Buy", "Potential Buy", "Watch", "Avoid / Exit"]
+    confidence_score: float
     conviction_mode: Literal["HIGH_CONVICTION", "ALIGNED", "NORMAL"]
     confidence_note: str
     entry_price: float
@@ -117,11 +129,26 @@ class Personalization(BaseModel):
     next_step: str
 
 
+class AgentToolTrace(BaseModel):
+    tool_name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    output_preview: str
+
+
+class AgentStepTrace(BaseModel):
+    step_name: str
+    objective: str
+    thought: str = ""
+    model: str
+    tool_calls: list[AgentToolTrace] = Field(default_factory=list)
+    output_summary: str
+
+
 class FinalRecommendation(BaseModel):
     symbol: str
     user_id: str
     action: str
-    confidence_pct: float
+    confidence_score: float
     conviction_mode: str
     confidence_note: str
     entry_price: float
@@ -139,6 +166,8 @@ class FinalRecommendation(BaseModel):
     confirmation_triggers: list[str] = Field(default_factory=list)
     invalidation_triggers: list[str] = Field(default_factory=list)
     sources: dict[str, Any] = Field(default_factory=dict)
+    execution_mode: str = "heuristic"
+    agent_trace: list[AgentStepTrace] = Field(default_factory=list)
 
     @property
     def summary(self) -> str:
@@ -149,7 +178,7 @@ class FinalRecommendation(BaseModel):
         else:
             sentence_connector = "with structural confidence of"
             
-        return f"Do {self.action} at Rs {self.entry_price:.2f} because {note} {sentence_connector} {self.confidence_pct:.1f}%."
+        return f"Do {self.action} at Rs {self.entry_price:.2f} because {note} {sentence_connector} {self.confidence_score * 100:.1f}%."
 
 
 class AgentState(TypedDict, total=False):

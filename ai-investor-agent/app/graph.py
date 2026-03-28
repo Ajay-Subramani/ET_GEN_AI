@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import logging
+
 from langgraph.graph import END, START, StateGraph
 
+from app.config import get_settings
+from app.llm_agents import run_llm_recommendation
 from app.models import AgentState, FinalRecommendation
 from app.nodes import AnalystNodes
 
@@ -24,7 +28,18 @@ def build_graph():
     return graph.compile()
 
 
-def run_recommendation(symbol: str, user_id: str) -> FinalRecommendation:
+def run_heuristic_recommendation(symbol: str, user_id: str) -> FinalRecommendation:
     app = build_graph()
     result = app.invoke({"symbol": symbol.upper(), "user_id": user_id})
     return result["recommendation"]
+
+
+def run_recommendation(symbol: str, user_id: str) -> FinalRecommendation:
+    settings = get_settings()
+    if settings.gemini_agent_enabled and settings.gemini_api_key:
+        try:
+            return run_llm_recommendation(symbol, user_id)
+        except Exception as exc:  # pragma: no cover
+            logging.warning("Falling back to heuristic recommendation path: %s", exc)
+
+    return run_heuristic_recommendation(symbol, user_id)
