@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Repo-local Python/agent artifacts:
+    "ai-investor-agent/.venv/**",
+    "ai-investor-agent/**/__pycache__/**",
+    "ai-investor-agent/.pytest_cache/**",
   ]),
 ]);
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, Query, UploadFile, File
+from fastapi import FastAPI, Query, UploadFile, File, Form
 from pydantic import BaseModel
 
 from app.config import get_settings

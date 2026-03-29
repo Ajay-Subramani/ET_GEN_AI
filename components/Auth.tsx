@@ -31,8 +31,10 @@ export default function Auth() {
         });
         if (signInError) throw signInError;
       }
-    } catch (err: any) {
-      setError(err.message || "An authentication error occurred");
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : "An authentication error occurred";
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -46,8 +48,10 @@ export default function Auth() {
         provider: "google",
       });
       if (googleError) throw googleError;
-    } catch (err: any) {
-      setError(err.message || "A Google authentication error occurred");
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : "A Google authentication error occurred";
+      setError(message);
     } finally {
       setLoading(false);
     }

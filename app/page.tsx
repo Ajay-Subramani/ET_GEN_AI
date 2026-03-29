@@ -104,6 +104,13 @@ type RadarFeed = {
   agent_trace?: AgentStepTrace[];
 };
 
+type MonitoredEntry = {
+  id: number | string;
+  symbol: string;
+  interval_minutes: number;
+  latest_result?: RecommendationResponse | null;
+};
+
 type PortfolioExtractResponse = {
   extracted_holdings?: UserPortfolio["holdings"];
   holdings?: UserPortfolio["holdings"];
@@ -134,17 +141,33 @@ function formatPercent(value: number) {
 
 async function fetchJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
   const response = await fetch(input, init);
-  const data = (await response.json()) as T & {
-    error?: string;
-    message?: string;
-  };
+  const raw = await response.text();
+  const data = (raw ? (() => {
+    try {
+      return JSON.parse(raw) as T & { error?: string; message?: string; target?: string };
+    } catch {
+      return null;
+    }
+  })() : null) as (T & { error?: string; message?: string; target?: string }) | null;
 
   if (!response.ok) {
+    const backendTarget =
+      data && typeof data === "object" && "target" in data && data.target
+        ? ` (${data.target})`
+        : "";
+    const messageFromBody =
+      data && typeof data === "object" && "message" in data && data.message
+        ? String(data.message)
+        : null;
     const message =
-      typeof data === "object" && data && "message" in data && data.message
-        ? data.message
-        : "Request failed";
+      (data && typeof data === "object" && "error" in data && data.error === "backend_unreachable")
+        ? `Backend unreachable${backendTarget}${messageFromBody ? `: ${messageFromBody}` : ""}`
+        : messageFromBody ?? "Request failed";
     throw new Error(message);
+  }
+
+  if (data === null) {
+    throw new Error("Invalid JSON response from server");
   }
 
   return data;
@@ -246,7 +269,9 @@ function SymbolReportModal({ report, onClose }: SymbolReportModalProps) {
                {report.agent_trace?.slice(0, 3).map((step, idx) => (
                  <div key={idx} className="border-l border-slate-800 pl-4 py-1">
                    <div className="text-emerald-500 font-mono text-[10px] mb-1">[{step.step_name}]</div>
-                   <div className="text-slate-400 text-xs italic">"{step.thought}"</div>
+                   <div className="text-slate-400 text-xs italic">
+                     &ldquo;{step.thought}&rdquo;
+                   </div>
                  </div>
                ))}
              </div>
@@ -412,12 +437,6 @@ export default function Home() {
     }
   };
 
-  const deployAgentFromRadar = (targetSymbol: string) => {
-    setSymbol(targetSymbol);
-    setActiveTab("Terminal");
-    handleAnalyze(targetSymbol);
-  };
-
   const handleOutcomeSubmit = () => {
     if (!recommendation) return;
 
@@ -464,10 +483,6 @@ export default function Home() {
         });
     });
   };
-
-  const activeStyles = recommendation
-    ? ACTION_STYLES[mapBackendActionToActionType(recommendation.action, recommendation.confidence_score)]
-    : ACTION_STYLES["Watch"];
 
   const supportingStats = [
     {
@@ -538,7 +553,7 @@ export default function Home() {
           ) : null}
 
           {activeTab === "Signals" && (
-            <SignalsRadarScreen userId={effectiveUserId} onDeployAgent={deployAgentFromRadar} />
+            <SignalsRadarScreen userId={effectiveUserId} />
           )}
 
           {activeTab === "Portfolio" && (
@@ -562,7 +577,6 @@ export default function Home() {
                 latestComputedAt={latestComputedAt}
                 recommendation={recommendation}
                 riskProfile={riskProfile}
-                styles={activeStyles}
                 onOpenOutcomeModal={() => setShowOutcomeModal(true)}
                 onStartOver={() => {
                   setRecommendation(null);
@@ -737,9 +751,9 @@ function SideBar({
   );
 }
 
-function SignalsRadarScreen({ userId, onDeployAgent }: { userId: string; onDeployAgent: (symbol: string) => void }) {
+function SignalsRadarScreen({ userId }: { userId: string }) {
   const [feed, setFeed] = useState<RadarFeed | null>(null);
-  const [monitored, setMonitored] = useState<any[]>([]); // Monitored symbols
+  const [monitored, setMonitored] = useState<MonitoredEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshingMonitored, setIsRefreshingMonitored] = useState(false);
   const [searchSymbol, setSearchSymbol] = useState("");
@@ -769,13 +783,19 @@ function SignalsRadarScreen({ userId, onDeployAgent }: { userId: string; onDeplo
           })),
         });
       })
+      .catch((err: unknown) => {
+        setSearchError(err instanceof Error ? err.message : "Unable to load radar feed.");
+      })
       .finally(() => setIsLoading(false));
   };
 
   const fetchMonitored = () => {
     setIsRefreshingMonitored(true);
-    fetchJson<{ monitored_symbols: any[] }>(`/api/monitor?user_id=${userId}`)
+    fetchJson<{ monitored_symbols: MonitoredEntry[] }>(`/api/monitor?user_id=${userId}`)
       .then(res => setMonitored(res.monitored_symbols))
+      .catch((err: unknown) => {
+        setSearchError(err instanceof Error ? err.message : "Unable to load monitored symbols.");
+      })
       .finally(() => setIsRefreshingMonitored(false));
   };
 
@@ -796,7 +816,7 @@ function SignalsRadarScreen({ userId, onDeployAgent }: { userId: string; onDeplo
     formData.append("file", file);
 
     try {
-      await fetchJson<any>("/api/portfolio/extract", {
+      await fetchJson<PortfolioExtractResponse>("/api/portfolio/extract", {
         method: "POST",
         body: formData,
       });
@@ -813,7 +833,7 @@ function SignalsRadarScreen({ userId, onDeployAgent }: { userId: string; onDeplo
     if (!symbolToScan) return;
     setIsProcessingSearch(true);
     setSearchError(null);
-    fetchJson<any>(`/api/monitor/${symbolToScan.toUpperCase()}/scan`, {
+    fetchJson<{ symbol: string; result: RecommendationResponse }>(`/api/monitor/${symbolToScan.toUpperCase()}/scan`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ user_id: userId, interval_minutes: 60 })
@@ -828,7 +848,7 @@ function SignalsRadarScreen({ userId, onDeployAgent }: { userId: string; onDeplo
 
   const handleDeployAgent = (symbolToDeploy: string) => {
     setIsProcessingSearch(true);
-    fetchJson<any>(`/api/monitor/${symbolToDeploy.toUpperCase()}`, {
+    fetchJson<{ monitored: MonitoredEntry }>(`/api/monitor/${symbolToDeploy.toUpperCase()}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ user_id: userId, interval_minutes: 60 })
@@ -837,14 +857,20 @@ function SignalsRadarScreen({ userId, onDeployAgent }: { userId: string; onDeplo
       fetchMonitored();
       setSearchSymbol("");
     })
+    .catch((err: unknown) => {
+      setSearchError(err instanceof Error ? err.message : "Unable to deploy monitor.");
+    })
     .finally(() => setIsProcessingSearch(false));
   };
 
   const handleDeleteMonitor = (symbolToDelete: string) => {
-    fetchJson<any>(`/api/monitor/${symbolToDelete}?user_id=${userId}`, {
+    fetchJson<{ removed: unknown; symbol: string }>(`/api/monitor/${symbolToDelete}?user_id=${userId}`, {
       method: "DELETE"
     })
-    .then(() => fetchMonitored());
+    .then(() => fetchMonitored())
+    .catch((err: unknown) => {
+      setSearchError(err instanceof Error ? err.message : "Unable to delete monitor.");
+    });
   };
 
   const [showTrace, setShowTrace] = useState(false);
@@ -913,7 +939,9 @@ function SignalsRadarScreen({ userId, onDeployAgent }: { userId: string; onDeplo
               {feed.agent_trace.map((step, idx) => (
                 <div key={idx} className="border-l-2 border-slate-800 pl-4 py-1">
                   <div className="text-emerald-500 font-bold mb-1">[{step.step_name}] {step.objective}</div>
-                  <div className="text-slate-400 italic mb-2">"{step.thought}"</div>
+                  <div className="text-slate-400 italic mb-2">
+                    &ldquo;{step.thought}&rdquo;
+                  </div>
                   <div className="space-y-1">
                     {step.tool_calls.map((tool, tIdx) => (
                       <div key={tIdx} className="flex gap-2">
@@ -1176,6 +1204,7 @@ function MemoryScreen() {
   const [memory, setMemory] = useState<SetupMemory | null>(null);
   const [history, setHistory] = useState<OutcomeHistoryItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -1186,11 +1215,22 @@ function MemoryScreen() {
         setMemory(memoryResponse);
         setHistory(historyResponse);
       })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : "Unable to load memory log.");
+      })
       .finally(() => setIsLoading(false));
   }, []);
 
-  if (isLoading || !memory) {
-     return <div className="py-20 text-center text-slate-400">Loading pattern memory...</div>;
+  if (isLoading) {
+    return <div className="py-20 text-center text-slate-400">Loading pattern memory...</div>;
+  }
+
+  if (error) {
+    return <div className="py-20 text-center text-slate-400">{error}</div>;
+  }
+
+  if (!memory) {
+    return <div className="py-20 text-center text-slate-400">No memory data available.</div>;
   }
 
   return (
@@ -1792,7 +1832,11 @@ function ResultsScreen({
             <span className="mb-2 block text-xs uppercase tracking-[0.26em] text-slate-500">
               Portfolio Action
             </span>
-            <p className={`font-serif text-3xl ${recommendation.allocation_pct > 0 ? styles.accent : 'text-slate-400'}`}>
+            <p
+              className={`font-serif text-3xl ${
+                recommendation.allocation_pct > 0 ? actionStyles.accent : "text-slate-400"
+              }`}
+            >
               {recommendation.allocation_pct > 0 ? formatPercent(recommendation.allocation_pct) : "0.0% Allocation"}
             </p>
             <p className="mt-3 text-sm leading-7 text-slate-600">
@@ -1935,7 +1979,11 @@ function AgentTracePanel({ trace }: { trace: AgentStepTrace[] }) {
               <span className="text-[10px] uppercase tracking-[0.2em] text-slate-400">{step.model}</span>
             </div>
             <p className="mb-3 text-sm text-slate-600">{step.objective}</p>
-            {step.thought && <p className="mb-3 text-xs italic text-slate-500 bg-slate-50/50 p-3 rounded-xl border border-dashed border-slate-200">"{step.thought}"</p>}
+            {step.thought && (
+              <p className="mb-3 text-xs italic text-slate-500 bg-slate-50/50 p-3 rounded-xl border border-dashed border-slate-200">
+                &ldquo;{step.thought}&rdquo;
+              </p>
+            )}
             <p className="rounded-2xl bg-[color:var(--surface-low)] px-4 py-3 text-sm leading-7 text-slate-700">{step.output_summary}</p>
             {step.tool_calls.length > 0 ? (
               <div className="mt-4 flex flex-wrap gap-2">

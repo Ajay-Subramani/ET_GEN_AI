@@ -9,7 +9,7 @@ from typing import Any, Callable
 import numpy as np
 import pandas as pd
 import httpx
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, TypeAdapter
 
 from google import genai
 from google.genai import types
@@ -23,6 +23,7 @@ from app.detectors.fundamental import get_fundamental_context
 
 
 class SignalAgentOutput(BaseModel):
+    model_config = {"extra": "forbid"}
     signal_summary: str
     detected_signals: list[str]
     signal_stack: list[str]
@@ -31,6 +32,7 @@ class SignalAgentOutput(BaseModel):
 
 
 class ContextAgentOutput(BaseModel):
+    model_config = {"extra": "forbid"}
     context_summary: str
     market_condition: str
     sector_trend: str
@@ -40,6 +42,7 @@ class ContextAgentOutput(BaseModel):
 
 
 class DecisionAgentOutput(BaseModel):
+    model_config = {"extra": "forbid"}
     action: str
     conviction_mode: str
     confidence_pct: float
@@ -52,6 +55,7 @@ class DecisionAgentOutput(BaseModel):
 
 
 class PortfolioAgentOutput(BaseModel):
+    model_config = {"extra": "forbid"}
     allocation_pct: float
     next_step: str
     personalization_note: str
@@ -60,6 +64,7 @@ class PortfolioAgentOutput(BaseModel):
 
 
 class RadarSignalOutput(BaseModel):
+    model_config = {"extra": "forbid"}
     id: str
     symbol: str
     category: str
@@ -75,6 +80,7 @@ class RadarSignalOutput(BaseModel):
 
 
 class RadarFeedOutput(BaseModel):
+    model_config = {"extra": "forbid"}
     radar_summary: str
     signals: list[RadarSignalOutput]
     agent_trace: list[AgentStepTrace] = Field(default_factory=list)
@@ -655,15 +661,24 @@ class GeminiToolAgent:
             raise RuntimeError(f"{step_name} exceeded max tool rounds")
             
         try:
-            parsed = output_model.model_validate_json(response.text)
+            if hasattr(output_model, "model_validate_json"):
+                parsed = output_model.model_validate_json(response.text)
+            else:
+                parsed = TypeAdapter(output_model).validate_json(response.text)
         except Exception as e:
             try:
-                parsed = output_model.model_validate(_extract_json_payload(response.text))
+                if hasattr(output_model, "model_validate"):
+                    parsed = output_model.model_validate(_extract_json_payload(response.text))
+                else:
+                    parsed = TypeAdapter(output_model).validate_python(_extract_json_payload(response.text))
             except Exception as e2:
                 raise e
-            
+        
         # Extract thought (any text before function calls or the final answer)
         thought = response.text if response.text else ""
+        
+        # Prepare trace summary (handle dict/list vs BaseModel)
+        output_summary_data = parsed.model_dump() if hasattr(parsed, "model_dump") else parsed
         
         return parsed, AgentStepTrace(
             step_name=step_name,
@@ -671,7 +686,7 @@ class GeminiToolAgent:
             thought=thought,
             model=self.settings.gemini_model,
             tool_calls=tool_traces,
-            output_summary=_preview(parsed.model_dump()),
+            output_summary=_preview(output_summary_data),
         )
 
 
@@ -1070,8 +1085,16 @@ def build_signal_feed(symbols: list[str] | None = None) -> list[dict[str, Any]]:
 
 def run_llm_recommendation(symbol: str, user_id: str) -> FinalRecommendation:
     settings = get_settings()
+    if settings.app_env.lower() in {"test", "ci"}:
+        raise RuntimeError("LLM agents are disabled in test/ci env")
     if settings.ollama_agent_enabled:
-        return OllamaTextAgent().run(symbol, user_id)
+        try:
+            return OllamaTextAgent().run(symbol, user_id)
+        except Exception as exc:
+            logging.warning("Ollama agent failed; will try Gemini if configured: %s", exc)
+            if settings.gemini_agent_enabled and settings.gemini_api_key:
+                return GeminiToolAgent().run(symbol, user_id)
+            raise
 
     if settings.gemini_agent_enabled and settings.gemini_api_key:
         try:
@@ -1085,6 +1108,29 @@ def run_llm_recommendation(symbol: str, user_id: str) -> FinalRecommendation:
 
 def run_signal_radar(symbols: list[str] | None = None, limit: int = 10) -> RadarFeedOutput:
     settings = get_settings()
+    if settings.app_env.lower() in {"test", "ci"}:
+        radar_feed = build_signal_feed(symbols)
+        return RadarFeedOutput(
+            radar_summary="Backend deterministic radar feed generated from live tool data.",
+            signals=[
+                RadarSignalOutput(
+                    id=item["id"],
+                    symbol=item["symbol"],
+                    category=item["category"],
+                    signal_type=item["signal_type"],
+                    title=item["title"],
+                    description=item["description"],
+                    memo_narrative=item.get("memo_narrative", item["description"]),
+                    confidence_pct=float(item["confidence_pct"]),
+                    detected_at=str(item["detected_at"]),
+                    source=str(item["source"]),
+                    is_demo=bool(item.get("is_demo", False)),
+                    explanation="Deterministic heuristic generated from market tools.",
+                )
+                for item in radar_feed[:limit]
+            ],
+            agent_trace=[],
+        )
     if settings.ollama_agent_enabled:
         try:
             return OllamaTextAgent().run_signal_radar(symbols=symbols, limit=limit)

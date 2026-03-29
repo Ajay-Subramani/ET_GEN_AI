@@ -1,118 +1,431 @@
-<!-- BEGIN:nextjs-agent-rules -->
-# This is NOT the Next.js you know
+# AGENTS.md — Opportunity Radar (AI for Indian Investor)
 
-This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
-<!-- END:nextjs-agent-rules -->
+## Overview
 
-## Agent Development Guide
+This project implements an AI-powered Opportunity Radar that detects stock market signals and generates actionable trading insights.
 
-This repository contains two primary agent tiers working together:
+Goal:
 
-- A Next.js frontend (`app/`) that proxies requests to the backend via `app/api/*` route handlers.
-- A Python FastAPI agent service under `ai-investor-agent/app/` which implements the investment-agent pipeline and smaller LLM tool-agent paths.
+* Detect signals (NOT summarize news)
+* Enrich signals with reasoning
+* Generate actionable alerts
 
-This document explains the architecture, how to run the system locally, where to add or change agent behavior, and common troubleshooting notes.
+System Type:
 
-**Architecture overview**
+* Single-agent autonomous pipeline
+* Built inside Next.js (App Router)
+* No multi-agent orchestration
+* No backend microservices
 
-- Frontend: React + Next (app router). UI code is in `app/page.tsx` and components under `components/`. The frontend never talks directly to the Python API — it hits local Next route handlers under `app/api/*` which proxy to the backend using `lib/ai-investor.ts`.
-- Backend: FastAPI app lives at `ai-investor-agent/app/main.py`. The agent pipeline is constructed in `ai-investor-agent/app/graph.py` using LangGraph and node implementations live in `ai-investor-agent/app/nodes.py`.
-- Data + persistence: `ai-investor-agent/app/repository.py` abstracts Supabase (Postgres) access and provides deterministic demo fallbacks when Supabase is not configured.
-- Market adapters: `ai-investor-agent/app/data_sources.py` (yfinance, optional nsepython, talib)
-- LLM/tool agent: `ai-investor-agent/app/llm_agents.py` — contains OpenAI tool-agent wrappers and the radar builder used by `/signals`.
+LLM:
 
-**Key files**
+* Ollama (local runtime)
+* Model: deepseek-v3.2:cloud
 
-- `ai-investor-agent/app/main.py` — FastAPI entrypoints and REST contract.
-- `ai-investor-agent/app/graph.py` — builds the sequential agent flow: signal_detector -> context_enricher -> technical_analyzer -> decision_engine -> personalizer.
-- `ai-investor-agent/app/nodes.py` — concrete node implementations. To add rules or detectors, extend this file or refactor into `detectors/` as described in `PLAN.md`.
-- `ai-investor-agent/app/repository.py` — persistence + demo fallbacks.
-- `lib/ai-investor.ts` — Next proxy helpers. Frontend code uses the Next API routes to call the backend.
+Market Data:
 
-Running locally
-
-1. Backend (Python)
-
-	- Create/activate the virtualenv in `ai-investor-agent/.venv` or create one and `pip install -r ai-investor-agent/requirements.txt`.
-	- From the backend folder:
-
-	```bash
-	cd ai-investor-agent
-	source .venv/bin/activate
-	uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-	```
-
-	- The API endpoints are available at `http://127.0.0.1:8000`.
-
-2. Frontend (Next)
-
-	- Ensure frontend env is configured: copy `.env.example` → `.env.local` and set `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` and optionally `AI_INVESTOR_API_BASE_URL` (default `http://127.0.0.1:8000`).
-	- Start the Next dev server from repo root:
-
-	```bash
-	npm install
-	npm run dev
-	```
-
-3. Combined helper
-
-	- The repo includes `scripts/backend.sh` to start the backend; ensure it points to `uvicorn app.main:app` or run the command above directly.
-
-Feature flags & environment
-
-- Backend settings are in `ai-investor-agent/app/config.py` (Pydantic settings). Key toggles:
-  - `OPENAI_API_KEY` and `openai_agent_enabled` — enable the LLM/tool agent path.
-  - `SUPABASE_URL` / `SUPABASE_KEY` — if present, the repository uses Supabase instead of demo fallback.
-
-API surface (important endpoints)
-
-- `GET /health` — simple status
-- `GET /api/users` — bootstrap user portfolio
-- `GET /signals` — backend radar feed (may use LLM agent or deterministic build)
-- `POST /analyze` — produces a full `FinalRecommendation` for a symbol + user_id
-- `GET /memory/{symbol}` — setup memory & historical stats
-- `GET /symbols/{symbol}/technicals` — raw technical indicators
-- `GET /outcomes` / `POST /outcomes` — list and record realized outcomes
-
-Where to change agent behavior
-
-- Add detectors: factor out detection functions into `ai-investor-agent/app/detectors/technical.py` (recommended) and call them from `nodes.signal_detector` and `nodes.technical_analyzer`.
-- Change decision rules: update `ai-investor-agent/app/nodes.py::AnalystNodes.decision_engine()`.
-- Extend memory/persistence: modify `Repository` in `ai-investor-agent/app/repository.py` and add new SQL tables in `ai-investor-agent/sql/` with migrations.
-
-Testing
-
-- Backend tests: run from `ai-investor-agent/`:
-
-```bash
-cd ai-investor-agent
-source .venv/bin/activate
-pytest -q
-```
-
-- The tests validate the graph output and demo outcome behavior.
-
-Common troubleshooting
-
-- Error: "Could not import module 'main'" — means Uvicorn was pointed to `main:app` but no `main.py` at cwd; use `uvicorn app.main:app` or run from `ai-investor-agent` where a compatibility wrapper exists.
-- Backend unreachable from Next: ensure `AI_INVESTOR_API_BASE_URL` points to the running backend; check `lib/ai-investor.ts` for proxy behavior and error payloads.
-- Missing market data: yfinance and `nsepython` are optional; the code falls back to deterministic demo values if remote providers fail.
-
-Developer workflow & PR checklist
-
-- Run backend unit tests and smoke-start the API before opening a PR.
-- If adding public APIs, update `ai-investor-agent/app/main.py` and add OpenAPI docstrings where appropriate.
-- Keep demo vs live behavior explicit: label demo outputs (`source: demo`, `is_demo: true`) so frontend can render provenance.
-
-Notes and roadmap links
-
-- The detailed phases for roadmap and architectural direction live in `PLAN.md`. Follow Phase 0–3 before adding ingestion/real-time push features.
-
-If you want, I can also:
-
-- Patch `scripts/backend.sh` to call `uvicorn app.main:app` directly.
-- Add a small README in `ai-investor-agent/` that mirrors these run instructions.
+* TwelveData API (time_series endpoint only)
 
 ---
 
-Last updated: 2026-03-28
+## Core Pipeline
+
+The agent executes **3 sequential steps autonomously**:
+
+1. Signal Detection
+2. Context Enrichment
+3. Actionable Alert Generation
+
+Flow:
+Input → Fetch Data → Detect → Enrich → Act → Output
+
+---
+
+## Agent Architecture
+
+This system uses a **single autonomous agent** that completes all steps in one execution.
+
+### Execution Flow
+
+1. Input Reception
+
+   * Accept stock symbol and optional portfolio
+
+2. Data Fetch
+
+   * Retrieve market data from TwelveData
+
+3. Signal Detection
+
+   * Analyze price trend and volume
+
+4. Context Enrichment
+
+   * Explain reasoning behind signals
+
+5. Action Generation
+
+   * Produce actionable recommendation
+
+6. Output
+
+   * Return structured JSON
+
+---
+
+### Autonomous Behavior
+
+* Fully automatic execution
+* No human intervention required
+* Single request triggers full pipeline
+* Stateless (no memory between runs)
+
+---
+
+### Internal State Flow
+
+RAW INPUT
+↓
+MARKET DATA
+↓
+DETECTED SIGNALS
+↓
+ENRICHED CONTEXT
+↓
+ACTIONABLE DECISION
+
+---
+
+## Project Structure
+
+* `src/app/` → Next.js pages and layouts
+* `src/app/api/analyze-stock/route.js` → API route (core backend)
+* `src/lib/agent.js` → agent pipeline logic
+* `src/lib/twelvedata.js` → market data fetch logic
+* `src/app/globals.css` → styles
+
+Alias:
+
+* `@/*` → `src/*`
+
+---
+
+## Build & Dev Commands
+
+* `npm install`
+* `npm run dev`
+* `npm run build`
+* `npm run start`
+* `npm run lint`
+
+---
+
+## Coding Style
+
+* JavaScript (Next.js / React)
+* 2-space indentation
+* Prefer double quotes
+* Functional components only
+* Keep logic modular (`lib/`)
+
+---
+
+## API Design
+
+### Endpoint
+
+POST `/api/analyze-stock`
+
+### Input
+
+```json
+{
+  "stock": "RELIANCE",
+  "portfolio": ["TCS", "INFY"]
+}
+```
+
+---
+
+## Market Data Integration
+
+Uses TwelveData API.
+
+Base URL:
+https://api.twelvedata.com
+
+### Endpoint
+
+GET `/time_series`
+
+### Configuration
+
+* interval = 1day
+* outputsize = 10
+* exchange = NSE
+* country = India
+* format = JSON
+* timezone = exchange
+* type = stock
+
+### Example
+
+https://api.twelvedata.com/time_series?apikey=YOUR_API_KEY&symbol=RELIANCE&interval=1day&outputsize=10&exchange=NSE&country=India&format=JSON&timezone=exchange&type=stock
+
+---
+
+## Data Strategy
+
+Fetch ONLY:
+
+* last ~10 daily candles
+
+Extract:
+
+* price trend (up/down)
+* momentum (increasing/decreasing)
+* volatility
+* volume behavior
+
+Do NOT:
+
+* use technical indicator endpoints
+* fetch 1min data
+* fetch large datasets
+
+---
+
+## Agent Logic
+
+### Step 1 — Signal Detection
+
+From candle data:
+
+* rising prices → bullish trend
+* falling prices → bearish trend
+* rising volume → accumulation
+* falling volume → weak momentum
+
+Also detect:
+
+* sudden drops → potential risk events
+* sharp spikes → breakout potential
+
+Output:
+
+* signal (bullish / bearish / neutral)
+* signal_strength (early / strong / late)
+
+---
+
+### Step 2 — Context Enrichment
+
+Combine observations:
+
+* trend + volume → confirmation
+* sideways + spike → breakout setup
+* sudden drop + volume → selling pressure
+
+Rules:
+
+* explain WHY signal exists
+* connect price and volume
+* avoid generic statements
+
+---
+
+### Step 3 — Actionable Alert
+
+Must include:
+
+* Action:
+
+  * buy / watch / avoid
+* Entry:
+
+  * breakout / dip / confirmation
+* Risk:
+
+  * invalidation condition
+
+Examples:
+
+* "Enter above recent high"
+* "Exit if price drops below support"
+
+---
+
+## Advanced Reasoning Requirements
+
+### Conflicting Signals Handling
+
+If signals conflict:
+
+* Identify bullish signals
+* Identify bearish signals
+* Present both clearly
+* Provide balanced recommendation
+
+Example:
+
+* breakout (bullish)
+* overbought (bearish)
+
+Do NOT give one-sided output.
+
+---
+
+### Source Attribution
+
+The agent must reference source of reasoning:
+
+Examples:
+
+* "Based on recent price and volume data"
+* "Based on observed selling pressure"
+
+Avoid vague statements.
+
+---
+
+### Portfolio Impact Analysis
+
+If portfolio is provided:
+
+* Identify affected stocks
+* Estimate impact (low / medium / high)
+* Explain reasoning
+
+Example:
+
+* "This impacts 2 out of 5 holdings in your portfolio"
+* "Impact level: medium due to sector exposure"
+
+---
+
+### Uncertainty Handling
+
+The agent must:
+
+* Avoid absolute predictions
+* Provide conditional actions
+* Include confidence score
+
+Example:
+
+* "If price sustains above resistance → bullish continuation"
+* "If reversal occurs → downside risk increases"
+
+---
+
+## Ollama Integration
+
+Endpoint:
+http://localhost:11434/api/generate
+
+Model:
+deepseek-v3.2:cloud
+
+Behavior:
+
+* Accept prompt
+* Return response
+* Must be parsed into JSON
+
+---
+
+## Prompt Rules
+
+The model must:
+
+* Act as a financial analyst
+* Focus on signals (not news summary)
+* Follow 3-step pipeline strictly
+* Return structured JSON
+* Use only provided data
+* Avoid hallucination
+
+---
+
+## Output Schema
+
+```json
+{
+  "step_1_signal_detection": {
+    "signal": "string",
+    "signal_strength": "early | strong | late"
+  },
+  "step_2_context_enrichment": {
+    "reasoning": []
+  },
+  "step_3_actionable_alert": {
+    "action": "string",
+    "entry": "string",
+    "risk": "string"
+  },
+  "conflicting_signals": [],
+  "confidence": number,
+  "why_most_people_miss_this": "string",
+  "portfolio_impact": {
+    "affected_stocks": [],
+    "impact_level": "low | medium | high",
+    "explanation": ""
+  },
+  "source": []
+}
+```
+
+---
+
+## Constraints
+
+* No database
+* No background jobs
+* No multi-agent system
+* No complex pipelines
+
+Single request → single response
+
+---
+
+## Security
+
+* Store API keys in `.env.local`
+* Never commit credentials
+* Validate API responses
+
+---
+
+## Development Workflow
+
+1. Create API route
+2. Integrate TwelveData
+3. Implement agent logic
+4. Connect Ollama
+5. Return structured JSON
+6. Test with sample stocks
+
+---
+
+## Example Flow
+
+1. User sends stock symbol
+2. Fetch time_series data
+3. Extract trend + volume
+4. Send to LLM
+5. Generate signal + action
+6. Return response
+
+---
+
+## Final Notes
+
+* Focus on intelligence, not infrastructure
+* Keep system simple
+* Output quality > system complexity
+* Simulate a smart analyst, not a trading engine
+
+
+## Jury Expectation
+
+* Refer to EXPECTATION.txt

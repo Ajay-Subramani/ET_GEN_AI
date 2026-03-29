@@ -28,18 +28,24 @@ def build_graph():
     return graph.compile()
 
 
-def run_heuristic_recommendation(symbol: str, user_id: str) -> FinalRecommendation:
+def run_heuristic_recommendation(symbol: str, user_id: str, *, llm_failure: str | None = None) -> FinalRecommendation:
     from app.models import AgentStepTrace
     app = build_graph()
     result = app.invoke({"symbol": symbol.upper(), "user_id": user_id})
     rec = result["recommendation"]
     
     # Add a pseudo-trace for UI transparency in heuristic mode
+    failure_note = ""
+    if llm_failure:
+        failure_note = f" LLM failure: {llm_failure}"
     rec.agent_trace = [
         AgentStepTrace(
             step_name="Heuristic Engine",
             objective="Analyze core market indicators using deterministic rule-base.",
-            thought=f"LLM Agent path was skipped or failed. Falling back to high-performance heuristic scoring for {symbol.upper()}.",
+            thought=(
+                f"LLM Agent path was skipped or failed. Falling back to high-performance heuristic scoring for {symbol.upper()}."
+                f"{failure_note}"
+            ),
             model="Rule-Engine v2.0",
             output_summary=f"Detected {len(result.get('signals', []))} structural signals. Confidence score: {rec.confidence_score * 100:.1f}%."
         )
@@ -49,10 +55,14 @@ def run_heuristic_recommendation(symbol: str, user_id: str) -> FinalRecommendati
 
 def run_recommendation(symbol: str, user_id: str) -> FinalRecommendation:
     settings = get_settings()
+    if settings.app_env.lower() in {"test", "ci"}:
+        return run_heuristic_recommendation(symbol, user_id)
     if settings.ollama_agent_enabled or (settings.gemini_agent_enabled and settings.gemini_api_key):
         try:
             return run_llm_recommendation(symbol, user_id)
         except Exception as exc:  # pragma: no cover
             logging.warning("Falling back to heuristic recommendation path: %s", exc)
+            llm_failure = f"{type(exc).__name__}: {exc}"
+            return run_heuristic_recommendation(symbol, user_id, llm_failure=llm_failure)
 
     return run_heuristic_recommendation(symbol, user_id)
