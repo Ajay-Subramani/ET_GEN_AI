@@ -13,7 +13,7 @@ def test_graph_returns_recommendation():
     assert result.watch_next
     assert result.setup_memory.similar_setups >= 0
     assert result.setup_memory.source in {"demo", "supabase"}
-    assert result.execution_mode in {"heuristic", "llm_tool_agent"}
+    assert result.execution_mode in {"heuristic", "llm_tool_agent", "ollama_text_agent"}
     assert isinstance(result.agent_trace, list)
 
 

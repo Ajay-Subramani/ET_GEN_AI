@@ -165,20 +165,33 @@ class FinalRecommendation(BaseModel):
     watch_next: list[str] = Field(default_factory=list)
     confirmation_triggers: list[str] = Field(default_factory=list)
     invalidation_triggers: list[str] = Field(default_factory=list)
+    fundamental_context: FundamentalContext = Field(default_factory=FundamentalContext)
+    memo_narrative: str = ""
     sources: dict[str, Any] = Field(default_factory=dict)
     execution_mode: str = "heuristic"
     agent_trace: list[AgentStepTrace] = Field(default_factory=list)
 
     @property
+    def confidence_pct(self) -> float:
+        return float(self.confidence_score) * 100.0
+
+    @property
     def summary(self) -> str:
-        # Prevent punctuation collision by checking if analyst_note ends with terminal punctuation
-        note = self.analyst_note.strip()
-        if note.endswith(".") or note.endswith("!"):
-            sentence_connector = "Structural confidence is"
-        else:
-            sentence_connector = "with structural confidence of"
+        # If we have a memo_narrative (agent mode), use it as the primary summary
+        if self.memo_narrative:
+            return self.memo_narrative
             
-        return f"Do {self.action} at Rs {self.entry_price:.2f} because {note} {sentence_connector} {self.confidence_score * 100:.1f}%."
+        # Fallback to a cleaner heuristic summary
+        note = self.analyst_note.strip()
+        if not note:
+            return f"Action: {self.action} based on standard market scans."
+            
+        if note.endswith(".") or note.endswith("!"):
+            sentence_connector = "Technical evidence points to"
+        else:
+            sentence_connector = "with"
+            
+        return f"{self.action} target identified: {note} {sentence_connector} {self.confidence_score * 100:.1f}% confidence."
 
 
 class AgentState(TypedDict, total=False):

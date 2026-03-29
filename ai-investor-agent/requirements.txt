@@ -1,8 +1,9 @@
 fastapi==0.116.1
 uvicorn[standard]==0.35.0
 streamlit==1.49.1
-langgraph==0.6.6
-langchain-core==0.3.75
+langgraph==1.1.3
+langchain-core==1.2.23
+langchain
 supabase==2.17.0
 psycopg[binary]==3.2.10
 pydantic==2.11.7
@@ -13,5 +14,9 @@ yfinance==0.2.65
 nsepython==2.97
 TA-Lib==0.6.5
 httpx==0.28.1
+requests
+beautifulsoup4
+lxml
 python-dotenv==1.1.1
 pytest==8.4.1
+python-multipart

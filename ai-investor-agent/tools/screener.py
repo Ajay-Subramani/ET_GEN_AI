@@ -434,6 +434,62 @@ def scrape_screener(symbol: str) -> dict:
     return company_data
 
 
+@tool
+def discover_stocks(query: str = "Volume > 1000000 AND Price > 100 AND Market Cap > 1000") -> list[str]:
+    """
+    Search for stocks matching a query on screener.in.
+    Returns a list of top 10 symbols.
+    """
+    url = "https://www.screener.in/screen/raw/"
+    params = {"query": query}
+    try:
+        print(f"[INFO] Discovering stocks with query: {query}")
+        resp = requests.get(url, params=params, headers=HEADERS, timeout=30)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "lxml")
+        
+        # Screener search results are in a <table>
+        table = soup.find("table", class_="data-table")
+        if not table:
+            print("[WARN] No results table found for discovery query.")
+            return []
+            
+        symbols = []
+        for tr in table.select("tbody tr"):
+            cells = tr.find_all("td")
+            if len(cells) > 1:
+                # The symbol is usually in the second column (index 1) or third (index 2)
+                # We'll look for the first <td> that contains a link with /company/
+                sym = None
+                for cell in cells:
+                    link = cell.find("a", href=True)
+                    if link and "/company/" in link["href"]:
+                        # Extract symbol from /company/SYMBOL/
+                        href_parts = link["href"].strip("/").split("/")
+                        if len(href_parts) >= 2:
+                            sym = href_parts[1].upper()
+                            break
+                
+                if not sym:
+                    # Fallback to column index 1 text
+                    symbol_text = _clean(cells[1].get_text())
+                    match = re.search(r"^([A-Z0-9_\-]+)", symbol_text)
+                    if match:
+                        sym = match.group(1).upper()
+
+                if sym and sym not in symbols:
+                    symbols.append(sym)
+            
+            if len(symbols) >= 10:
+                break
+        
+        print(f"[INFO] Discovered {len(symbols)} symbols: {symbols}")
+        return symbols
+    except Exception as e:
+        print(f"[WARN] Failed to discover stocks: {e}")
+        return []
+
+
 # ---------------------------------------------------------------------------
 # Quick CLI demo
 # ---------------------------------------------------------------------------

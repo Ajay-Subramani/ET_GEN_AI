@@ -29,14 +29,27 @@ def build_graph():
 
 
 def run_heuristic_recommendation(symbol: str, user_id: str) -> FinalRecommendation:
+    from app.models import AgentStepTrace
     app = build_graph()
     result = app.invoke({"symbol": symbol.upper(), "user_id": user_id})
-    return result["recommendation"]
+    rec = result["recommendation"]
+    
+    # Add a pseudo-trace for UI transparency in heuristic mode
+    rec.agent_trace = [
+        AgentStepTrace(
+            step_name="Heuristic Engine",
+            objective="Analyze core market indicators using deterministic rule-base.",
+            thought=f"LLM Agent path was skipped or failed. Falling back to high-performance heuristic scoring for {symbol.upper()}.",
+            model="Rule-Engine v2.0",
+            output_summary=f"Detected {len(result.get('signals', []))} structural signals. Confidence score: {rec.confidence_score * 100:.1f}%."
+        )
+    ]
+    return rec
 
 
 def run_recommendation(symbol: str, user_id: str) -> FinalRecommendation:
     settings = get_settings()
-    if settings.gemini_agent_enabled and settings.gemini_api_key:
+    if settings.ollama_agent_enabled or (settings.gemini_agent_enabled and settings.gemini_api_key):
         try:
             return run_llm_recommendation(symbol, user_id)
         except Exception as exc:  # pragma: no cover

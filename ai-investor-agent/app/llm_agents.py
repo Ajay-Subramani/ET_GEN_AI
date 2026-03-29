@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from google import genai
 from google.genai import types
+from tools.screener import scrape_screener, discover_stocks
 
 from app.config import get_settings
 from app.data_sources import MarketDataService
@@ -54,6 +55,7 @@ class PortfolioAgentOutput(BaseModel):
     allocation_pct: float
     next_step: str
     personalization_note: str
+    memo_narrative: str = ""
     warning: str | None = None
 
 
@@ -64,6 +66,7 @@ class RadarSignalOutput(BaseModel):
     signal_type: str
     title: str
     description: str
+    memo_narrative: str = ""
     confidence_pct: float
     detected_at: str
     source: str
@@ -326,6 +329,258 @@ class AgentToolbox:
         }
 
 
+def _normalize_confidence_pct(confidence_pct: float) -> float:
+    value = float(confidence_pct)
+    if not isfinite(value):
+        return 0.0
+    if value > 1.0:
+        value = value / 100.0
+    return max(0.0, min(value, 1.0))
+
+
+class OllamaTextAgent:
+    """Text-only agent path using local Ollama (no tool-calling; prefetch context)."""
+
+    def __init__(self) -> None:
+        self.settings = get_settings()
+        self.toolbox = AgentToolbox()
+
+    def _call_ollama(self, system_prompt: str, user_prompt: str) -> str:
+        timeout = self.settings.ollama_timeout_s
+        payload = {
+            "model": self.settings.ollama_text_model,
+            "stream": False,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            # Newer Ollama versions support "format": "json" for strict JSON.
+            "format": "json",
+        }
+
+        with httpx.Client(base_url=self.settings.ollama_base_url, timeout=timeout) as client:
+            try:
+                resp = client.post("/api/chat", json=payload)
+                resp.raise_for_status()
+                body = resp.json()
+                message = body.get("message") or {}
+                content = message.get("content") or body.get("response")
+                if not content:
+                    raise RuntimeError("Ollama chat response missing assistant content")
+                return str(content)
+            except httpx.HTTPStatusError as exc:
+                # Some Ollama installs do not expose /api/chat (or reject "format").
+                status = exc.response.status_code if exc.response is not None else None
+                if status not in {404, 405, 400}:
+                    raise
+            except Exception:
+                pass
+
+            # Fallback for older endpoints that only support /api/generate.
+            resp = client.post(
+                "/api/generate",
+                json={
+                    "model": self.settings.ollama_text_model,
+                    "stream": False,
+                    "prompt": f"{system_prompt}\n\n{user_prompt}",
+                    "format": "json",
+                },
+            )
+            resp.raise_for_status()
+            body = resp.json()
+            content = body.get("response") or ""
+            if not content:
+                raise RuntimeError("Ollama generate response missing assistant content")
+            return str(content)
+
+    def run(self, symbol: str, user_id: str) -> FinalRecommendation:
+        symbol = symbol.upper()
+        stock_meta = self.toolbox.get_stock_metadata(symbol)
+        price_snapshot = self.toolbox.get_price_snapshot(symbol)
+        signal_facts = self.toolbox.get_signal_facts(symbol)
+        market_context = self.toolbox.get_market_context(symbol)
+        fundamental_context = self.toolbox.get_fundamental_context(symbol)
+
+        market_condition = str(market_context.get("market_context", {}).get("condition", "neutral"))
+        signal_stack = list(signal_facts.get("candidate_signals", []))
+
+        trade_levels = self.toolbox.get_trade_levels(symbol)
+        setup_memory = self.toolbox.repo.get_setup_memory(
+            symbol,
+            str(trade_levels.get("pattern_name", "breakout")),
+            market_condition,
+            signal_stack,
+        )
+
+        portfolio = self.toolbox.get_user_portfolio(user_id)
+        entry_price = float(trade_levels.get("entry_price", 0.0) or 0.0)
+        personalization_scenarios = {
+            action: self.toolbox.compute_portfolio_personalization(symbol, user_id, action, entry_price)
+            for action in ("BUY", "WATCH", "AVOID")
+        }
+
+        context_blob = {
+            "symbol": symbol,
+            "user_id": user_id,
+            "stock_metadata": stock_meta,
+            "price_snapshot": price_snapshot,
+            "signal_facts": signal_facts,
+            "market_context": market_context,
+            "fundamental_context": fundamental_context,
+            "trade_levels": trade_levels,
+            "setup_memory": setup_memory.model_dump(),
+            "user_portfolio": portfolio,
+            "personalization_scenarios": personalization_scenarios,
+        }
+
+        system_prompt = (
+            "You are the Alpha Investment Agent for Indian equities. "
+            "You are given pre-fetched market and portfolio context as JSON. "
+            "Do not ask for tools. Do not output markdown. Output strict JSON only."
+        )
+        user_prompt = (
+            "Using ONLY the provided context JSON, produce a single JSON object with keys:\n"
+            "- signal: {signal_summary, detected_signals, signal_stack, pattern_hypothesis, actionability}\n"
+            "- context: {context_summary, market_condition, sector_trend, historical_edge, fundamental_context, preferred_pattern}\n"
+            "- decision: {action, conviction_mode, confidence_pct, confidence_note, reasoning, analyst_note, confirmation_triggers, invalidation_triggers, watch_next}\n"
+            "- portfolio: {allocation_pct, next_step, personalization_note, memo_narrative, warning}\n\n"
+            "Rules:\n"
+            "- decision.action must be one of BUY, WATCH, AVOID.\n"
+            "- decision.confidence_pct must be a number (0-100 preferred).\n"
+            "- portfolio.allocation_pct must match the allocation_pct from personalization_scenarios for the chosen action.\n"
+            "- Keep explanations mentor-style, plain English, and evidence-based.\n\n"
+            f"CONTEXT_JSON={json.dumps(_to_json_safe(context_blob), ensure_ascii=True)}"
+        )
+
+        raw = self._call_ollama(system_prompt=system_prompt, user_prompt=user_prompt)
+        payload = _extract_json_payload(raw)
+
+        signal_output = SignalAgentOutput.model_validate(payload.get("signal", {}))
+        context_output = ContextAgentOutput.model_validate(payload.get("context", {}))
+        decision_output = DecisionAgentOutput.model_validate(payload.get("decision", {}))
+        portfolio_output = PortfolioAgentOutput.model_validate(payload.get("portfolio", {}))
+
+        pattern_name = context_output.preferred_pattern or str(trade_levels.get("pattern_name") or "breakout")
+        trade_levels = self.toolbox.get_trade_levels(symbol, pattern_name)
+        setup_memory = self.toolbox.repo.get_setup_memory(
+            symbol,
+            pattern_name,
+            context_output.market_condition or market_condition,
+            signal_output.signal_stack or signal_stack,
+        )
+
+        personalization = personalization_scenarios.get(decision_output.action) or self.toolbox.compute_portfolio_personalization(
+            symbol=symbol,
+            user_id=user_id,
+            action=decision_output.action,
+            entry_price=float(trade_levels["entry_price"]),
+        )
+
+        confidence_score = _normalize_confidence_pct(decision_output.confidence_pct)
+        trace = AgentStepTrace(
+            step_name="ollama_text_agent",
+            objective="Generate a text-only recommendation using pre-fetched context (no tool-calling).",
+            thought="Prefetched market, fundamentals, memory, and portfolio context; requested strict JSON recommendation.",
+            model=self.settings.ollama_text_model,
+            tool_calls=[],
+            output_summary=_preview(payload),
+        )
+
+        return FinalRecommendation(
+            symbol=symbol,
+            user_id=user_id,
+            action=decision_output.action,
+            confidence_score=confidence_score,
+            conviction_mode=decision_output.conviction_mode,
+            confidence_note=decision_output.confidence_note,
+            entry_price=float(trade_levels["entry_price"]),
+            target_price=float(trade_levels["target_price"]),
+            stop_loss=float(trade_levels["stop_loss"]),
+            reasoning=decision_output.reasoning,
+            analyst_note=decision_output.analyst_note,
+            setup_memory=setup_memory,
+            fundamental_context=context_output.fundamental_context,
+            allocation_pct=float(personalization["allocation_pct"]),
+            allocation_amount=float(personalization["allocation_amount"]),
+            sector_exposure_pct=float(personalization["sector_exposure_pct"]),
+            personalization_warning=portfolio_output.warning or personalization.get("warning"),
+            next_step=portfolio_output.next_step or str(personalization["next_step"]),
+            memo_narrative=portfolio_output.memo_narrative,
+            watch_next=decision_output.watch_next,
+            confirmation_triggers=decision_output.confirmation_triggers,
+            invalidation_triggers=decision_output.invalidation_triggers,
+            sources={
+                "signals": ["ollama_text_agent", signal_facts.get("market_data_source", "demo")],
+                "historical": setup_memory.source,
+                "sector": market_context.get("sector_context", {}).get("source", stock_meta.get("source", "demo")),
+                "market": market_context.get("market_context", {}).get("source", "demo"),
+                "technical": trade_levels["source"],
+            },
+            execution_mode="ollama_text_agent",
+            agent_trace=[trace],
+        )
+
+    def run_signal_radar(self, symbols: list[str] | None = None, limit: int = 10) -> RadarFeedOutput:
+        watchlist = [symbol.upper() for symbol in (symbols or []) if symbol][:10]
+        if not watchlist:
+            try:
+                watchlist = list(discover_stocks.invoke({"query": "Volume > 500000 AND Price > 100"}))[:10]
+            except Exception as exc:
+                logging.warning("Ollama radar discovery failed: %s", exc)
+                watchlist = []
+
+        if not watchlist:
+            watchlist = ["RELIANCE", "TATASTEEL", "INFY", "HDFCBANK", "ICICIBANK", "SBIN", "BHARTIARTL", "ITC"]
+
+        per_symbol: list[dict[str, Any]] = []
+        for symbol in watchlist:
+            try:
+                per_symbol.append(
+                    {
+                        "symbol": symbol,
+                        "price_snapshot": self.toolbox.get_price_snapshot(symbol),
+                        "signal_facts": self.toolbox.get_signal_facts(symbol),
+                        "market_context": self.toolbox.get_market_context(symbol),
+                        "fundamental_context": self.toolbox.get_fundamental_context(symbol),
+                        "trade_levels": self.toolbox.get_trade_levels(symbol),
+                    }
+                )
+            except Exception as exc:
+                logging.warning("Ollama radar context build failed for %s: %s", symbol, exc)
+
+        system_prompt = (
+            "You are the Opportunity Radar Agent for Indian equities. "
+            "You are given pre-fetched per-symbol context as JSON. "
+            "Do not ask for tools. Do not output markdown. Output strict JSON only."
+        )
+        user_prompt = (
+            "Create a radar feed as strict JSON with keys radar_summary and signals.\n"
+            "Each signal must include id, symbol, category, signal_type, title, description, memo_narrative, "
+            "confidence_pct, detected_at, source, is_demo, explanation.\n"
+            f"Return at most {int(limit)} signals, ranked by tradeability.\n\n"
+            f"CONTEXT_JSON={json.dumps(_to_json_safe({'symbols': watchlist, 'data': per_symbol}), ensure_ascii=True)}"
+        )
+
+        raw = self._call_ollama(system_prompt=system_prompt, user_prompt=user_prompt)
+        payload = _extract_json_payload(raw)
+        parsed = RadarFeedOutput.model_validate(payload)
+
+        trace = AgentStepTrace(
+            step_name="ollama_radar",
+            objective="Generate a radar feed using pre-fetched context (no tool-calling).",
+            thought="Prefetched symbol contexts; requested strict JSON radar feed.",
+            model=self.settings.ollama_text_model,
+            tool_calls=[],
+            output_summary=_preview(payload),
+        )
+
+        return RadarFeedOutput(
+            radar_summary=parsed.radar_summary,
+            signals=parsed.signals[:limit],
+            agent_trace=[trace],
+        )
+
+
 class GeminiToolAgent:
     def __init__(self) -> None:
         self.settings = get_settings()
@@ -351,7 +606,8 @@ class GeminiToolAgent:
             "get_trade_levels": self.toolbox.get_trade_levels,
             "get_user_portfolio": self.toolbox.get_user_portfolio,
             "compute_portfolio_personalization": self.toolbox.compute_portfolio_personalization,
-            "get_fundamental_context": self.toolbox.get_fundamental_context,
+            "get_fundamental_context": scrape_screener,
+            "discover_stocks": discover_stocks,
         }
         selected_tools = [specs[name] for name in tool_names]
         
@@ -424,9 +680,11 @@ class GeminiToolAgent:
 
         signal_output, signal_trace = self._call_model(
             instructions=(
-                "You are the Signal Detection Agent for an Indian equities trading workflow. "
-                "Use the provided tools before answering. Focus on real tradeable signal quality, "
-                "not summarization. Return strict JSON only."
+                "You are the Alpha Investment Agent for Indian markets. Your goal is to detect high-conviction "
+                "trading signals (Buy/Watch/Avoid) and explain them to non-technical users in plain English. "
+                "DO NOT use technical trader slang (e.g., 'bags', 'to the moon', 'rekt', 'support/resistance' without explanation). "
+                "Act like a wise mentor: explain 'The Why' (context), 'The Proof' (data points), and 'The How' (action). "
+                "Always use real data from tools. Return strict JSON only."
             ),
             user_prompt=(
                 f"Analyze symbol {symbol}. You must call get_stock_metadata, get_price_snapshot, and get_signal_facts "
@@ -485,8 +743,11 @@ class GeminiToolAgent:
 
         portfolio_output, portfolio_trace = self._call_model(
             instructions=(
-                "You are the Portfolio Personalization Agent. Adapt the trade for the user's portfolio and risk profile. "
-                "Use the portfolio tools before answering. Return strict JSON only."
+                "You are the Portfolio Personalization Agent. Adapt the trade for users based on their "
+                "current holdings and capital. Explain why this specific opportunity fits or conflicts with their "
+                "portfolio. Use a supportive, mentor-like tone. Include a 'memo_narrative' field with a 3-sentence "
+                "plain English explanation that connects the market signal to the user's specific financial situation. "
+                "Avoid technical jargon. Return strict JSON only."
             ),
             user_prompt=(
                 "Decision analysis:\n"
@@ -512,11 +773,17 @@ class GeminiToolAgent:
         stock_meta = self.toolbox.get_stock_metadata(symbol)
         market_context = self.toolbox.get_market_context(symbol)
 
+        confidence_value = float(decision_output.confidence_pct)
+        if not isfinite(confidence_value):
+            confidence_value = 0.0
+        if confidence_value > 1.0:
+            confidence_value = confidence_value / 100.0
+
         return FinalRecommendation(
             symbol=symbol,
             user_id=user_id,
             action=decision_output.action,
-            confidence_pct=max(0.0, min(float(decision_output.confidence_pct), 99.0)),
+            confidence_score=max(0.0, min(confidence_value, 1.0)),
             conviction_mode=decision_output.conviction_mode,
             confidence_note=decision_output.confidence_note,
             entry_price=float(trade_levels["entry_price"]),
@@ -525,11 +792,13 @@ class GeminiToolAgent:
             reasoning=decision_output.reasoning,
             analyst_note=decision_output.analyst_note,
             setup_memory=setup_memory,
+            fundamental_context=context_output.fundamental_context,
             allocation_pct=float(personalization["allocation_pct"]),
             allocation_amount=float(personalization["allocation_amount"]),
             sector_exposure_pct=float(personalization["sector_exposure_pct"]),
             personalization_warning=portfolio_output.warning or personalization.get("warning"),
             next_step=portfolio_output.next_step or str(personalization["next_step"]),
+            memo_narrative=portfolio_output.memo_narrative,
             watch_next=decision_output.watch_next,
             confirmation_triggers=decision_output.confirmation_triggers,
             invalidation_triggers=decision_output.invalidation_triggers,
@@ -553,20 +822,83 @@ class GeminiToolAgent:
     ) -> SetupMemory:
         return self.repo.get_setup_memory(symbol, pattern_name, market_condition, signal_stack)
 
+    def extract_portfolio_from_image(self, image_bytes: bytes) -> list[dict[str, Any]]:
+        """Extract stock symbols and quantities from an image using Gemini Flash Vision."""
+        try:
+            prompt = (
+                "You are an expert financial analyst. Analyze this portfolio screenshot and extract "
+                "a list of stock symbols and their corresponding quantities. "
+                "Return a JSON array of objects with keys: 'symbol' and 'quantity'. "
+                "Focus on NSE/BSE symbols. Ignore profit/loss or other values."
+            )
+            
+            response = self.client.models.generate_content(
+                model="gemini-2.0-flash", # Use the latest flash model
+                contents=[
+                    prompt,
+                    types.Part.from_bytes(data=image_bytes, mime_type="image/png")
+                ],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                )
+            )
+            
+            # The model returns a list of objects
+            holdings = json.loads(response.text)
+            if not isinstance(holdings, list):
+                # Fallback if it's not a list
+                if isinstance(holdings, dict) and "holdings" in holdings:
+                    holdings = holdings["holdings"]
+                else:
+                    return []
+            
+            # Normalize symbols
+            for h in holdings:
+                if "symbol" in h:
+                    h["symbol"] = str(h["symbol"]).upper().split(".")[0].split(":")[0].strip()
+            
+            return holdings
+        except Exception as e:
+            logging.error(f"Failed to extract portfolio from image: {e}")
+            return []
+
     def run_signal_radar(self, symbols: list[str] | None = None, limit: int = 10) -> RadarFeedOutput:
-        watchlist = [symbol.upper() for symbol in (symbols or ["TATASTEEL", "RELIANCE", "HDFCBANK", "INFY", "SUNPHARMA"])]
+        """Runs the fully autonomous radar scan for 5-10 top symbols discovered today."""
+        # Step 0: Discovery
+        symbols_to_scan = [symbol.upper() for symbol in (symbols or []) if symbol]
+        discovery_trace = None
+        if not symbols_to_scan:
+            try:
+                discovery_result, discovery_trace = self._call_model(
+                    instructions="You are the Discovery Agent. Find the top 5-10 high-alpha NSE stocks to scan today using tools.",
+                    user_prompt="Call discover_stocks(query='Volume > 1000000 AND Price > 100') and return exactly 5-10 symbols in a list.",
+                    output_model=list[str],
+                    tool_names=["discover_stocks"],
+                    step_name="stock_discovery",
+                    objective="Pick symbols with high trading activity for today's radar.",
+                )
+                symbols_to_scan = [str(sym).upper() for sym in discovery_result]
+            except Exception as e:
+                logging.warning("Autonomous discovery failed: %s. Falling back to static watchlist.", e)
+                symbols_to_scan = []
+
+        if not symbols_to_scan:
+            symbols_to_scan = ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK"]
+
         prompt = (
             "You are the Opportunity Radar Agent for Indian equities. Use the provided tools to inspect each "
-            f"symbol in this watchlist: {', '.join(watchlist)}. Focus on real alpha, not summarization. "
+            f"symbol in this watchlist: {', '.join(symbols_to_scan)}. Focus on real alpha, not summarization. "
             "Return strict JSON only with keys radar_summary and signals. Each signal must include id, symbol, "
-            "category, signal_type, title, description, confidence_pct, detected_at, source, is_demo, explanation. "
-            f"Return at most {limit} signals ranked by tradeability. Prefer technical, flow, and derivatives signals "
+            "category, signal_type, title, description, memo_narrative, confidence_pct, detected_at, source, is_demo, explanation. "
+            "The memo_narrative should be a 2-3 sentence 'mentor-style' investment insight in plain English."
+            "Return at most 10 signals ranked by tradeability. Prefer technical, flow, and derivatives signals "
             "that have actionable confirmation or invalidation logic."
         )
         output, trace = self._call_model(
             instructions=(
-                "You are a market scanning agent. Use tools for price, signal facts, market context, and trade levels "
-                "before synthesizing a ranked radar feed. Return JSON only."
+                "You are an expert market scanning agent. Use tools for price, signal facts, market context, "
+                "fundamental context, and trade levels before synthesizing a ranked radar feed. "
+                "Avoid technical slang; focus on clear, evidence-based opportunities. Return JSON only."
             ),
             user_prompt=prompt,
             output_model=RadarFeedOutput,
@@ -582,19 +914,30 @@ class GeminiToolAgent:
         )
 
         signals = output.signals[:limit]
-        normalized_signals: list[RadarSignalOutput] = []
-        for signal in signals:
-            normalized_signals.append(signal)
+        out_traces = [trace]
+        if discovery_trace:
+            out_traces.insert(0, discovery_trace)
+
         return RadarFeedOutput(
             radar_summary=output.radar_summary,
-            signals=normalized_signals,
-            agent_trace=[trace],
+            signals=signals,
+            agent_trace=out_traces,
         )
 
 
 def build_signal_feed(symbols: list[str] | None = None) -> list[dict[str, Any]]:
     toolbox = AgentToolbox()
-    watchlist = [symbol.upper() for symbol in (symbols or ["TATASTEEL", "RELIANCE", "HDFCBANK", "INFY", "SUNPHARMA"])]
+    if not symbols:
+        try:
+            symbols = discover_stocks.invoke({"query": "Volume > 500000 AND Price > 100"})
+        except Exception as exc:
+            logging.warning("Discovery tool failed: %s", exc)
+            symbols = None
+            
+        if not symbols:
+            symbols = ["RELIANCE", "TATASTEEL", "INFY", "HDFCBANK", "ICICIBANK", "SBIN", "BHARTIARTL", "ITC", "LT", "MARUTI"]
+    
+    watchlist = [symbol.upper() for symbol in (symbols or [])][:10]
     events: list[dict[str, Any]] = []
 
     for symbol in watchlist:
@@ -727,21 +1070,30 @@ def build_signal_feed(symbols: list[str] | None = None) -> list[dict[str, Any]]:
 
 def run_llm_recommendation(symbol: str, user_id: str) -> FinalRecommendation:
     settings = get_settings()
-    if not settings.gemini_agent_enabled or not settings.gemini_api_key:
-        raise RuntimeError("Gemini agent path is not configured")
+    if settings.ollama_agent_enabled:
+        return OllamaTextAgent().run(symbol, user_id)
 
-    try:
-        return GeminiToolAgent().run(symbol, user_id)
-    except Exception as exc:
-        logging.exception("LLM agent recommendation failed: %s", exc)
-        raise
+    if settings.gemini_agent_enabled and settings.gemini_api_key:
+        try:
+            return GeminiToolAgent().run(symbol, user_id)
+        except Exception as exc:
+            logging.exception("Gemini LLM recommendation failed: %s", exc)
+            raise
+
+    raise RuntimeError("No text agent path is configured (ollama_agent_enabled is false and Gemini is not configured)")
 
 
 def run_signal_radar(symbols: list[str] | None = None, limit: int = 10) -> RadarFeedOutput:
     settings = get_settings()
+    if settings.ollama_agent_enabled:
+        try:
+            return OllamaTextAgent().run_signal_radar(symbols=symbols, limit=limit)
+        except Exception as exc:
+            logging.warning("Ollama Radar failed, falling back to heuristic: %s", exc)
+
     if settings.gemini_agent_enabled and settings.gemini_api_key:
         try:
-            return GeminiToolAgent().run_signal_radar(symbols, limit)
+            return GeminiToolAgent().run_signal_radar(symbols=symbols, limit=limit)
         except Exception as exc:
             logging.warning("Gemini Radar failed, falling back to heuristic: %s", exc)
 
@@ -757,6 +1109,7 @@ def run_signal_radar(symbols: list[str] | None = None, limit: int = 10) -> Radar
                 signal_type=item["signal_type"],
                 title=item["title"],
                 description=item["description"],
+                memo_narrative=item.get("memo_narrative", item["description"]),
                 confidence_pct=float(item["confidence_pct"]),
                 detected_at=str(item["detected_at"]),
                 source=str(item["source"]),

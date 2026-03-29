@@ -124,53 +124,38 @@ def get_fundamental_context(symbol: str) -> dict[str, float | str | None]:
             return context
             
         summary = data.get("summary", {})
-        if summary.get("stock_pe"):
-            try: context["pe_ratio"] = float(summary["stock_pe"].replace(",", ""))
-            except: pass
-            
-        if summary.get("roce"):
-            try: context["roce"] = float(summary["roce"].replace("%", ""))
-            except: pass
-            
-        if summary.get("roe"):
-            try: context["roe"] = float(summary["roe"].replace("%", ""))
-            except: pass
-            
-        if summary.get("debt_to_equity"):
-            try: context["debt_to_equity"] = float(summary["debt_to_equity"])
-            except: pass
+        def _to_float(val):
+            if val is None: return None
+            try:
+                # Remove currency symbols and commas
+                clean_val = str(val).replace(",", "").replace("Rs.", "").replace("%", "").strip()
+                if not clean_val or clean_val == "nan": return None
+                return float(clean_val)
+            except:
+                return None
+
+        context["pe_ratio"] = _to_float(summary.get("stock_pe"))
+        context["roce"] = _to_float(summary.get("roce"))
+        context["roe"] = _to_float(summary.get("roe"))
+        context["debt_to_equity"] = _to_float(summary.get("debt_to_equity"))
             
         quarterly = data.get("quarterly")
         if quarterly is not None and not quarterly.empty:
             if "OPM %" in quarterly.index or "OPM" in quarterly.index:
                 opm_key = "OPM %" if "OPM %" in quarterly.index else "OPM"
-                recent_opm = quarterly.loc[opm_key].iloc[-1]
-                if str(recent_opm).strip() and "%" in str(recent_opm):
-                    try: context["operating_margin"] = float(str(recent_opm).replace("%", ""))
-                    except: pass
-                else:
-                    try: context["operating_margin"] = float(recent_opm)
-                    except: pass
+                context["operating_margin"] = _to_float(quarterly.loc[opm_key].iloc[-1])
                     
             if "Sales" in quarterly.index and quarterly.shape[1] >= 5:
-                recent_sales = quarterly.loc["Sales"].iloc[-1]
-                yoy_sales = quarterly.loc["Sales"].iloc[-5] 
-                try:
-                    rs = float(str(recent_sales).replace(",", ""))
-                    ys = float(str(yoy_sales).replace(",", ""))
-                    if ys > 0:
-                        context["revenue_growth"] = ((rs / ys) - 1) * 100
-                except: pass
+                rs = _to_float(quarterly.loc["Sales"].iloc[-1])
+                ys = _to_float(quarterly.loc["Sales"].iloc[-5]) 
+                if rs is not None and ys is not None and ys > 0:
+                    context["revenue_growth"] = round(((rs / ys) - 1) * 100, 2)
                 
             if "Net Profit" in quarterly.index and quarterly.shape[1] >= 5:
-                recent_profit = quarterly.loc["Net Profit"].iloc[-1]
-                yoy_profit = quarterly.loc["Net Profit"].iloc[-5] 
-                try:
-                    rp = float(str(recent_profit).replace(",", ""))
-                    yp = float(str(yoy_profit).replace(",", ""))
-                    if yp > 0:
-                        context["profit_growth"] = ((rp / yp) - 1) * 100
-                except: pass
+                rp = _to_float(quarterly.loc["Net Profit"].iloc[-1])
+                yp = _to_float(quarterly.loc["Net Profit"].iloc[-5]) 
+                if rp is not None and yp is not None and yp > 0:
+                    context["profit_growth"] = round(((rp / yp) - 1) * 100, 2)
                 
         context["source"] = "screener.in"
     except Exception as e:

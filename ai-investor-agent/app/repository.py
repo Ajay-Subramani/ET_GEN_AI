@@ -104,6 +104,30 @@ class Repository:
             "source": "demo",
         }
 
+    def update_portfolio_holdings(self, user_id: str, holdings: list[dict[str, Any]]) -> dict[str, Any]:
+        """Update (overwrite) the user's portfolio holdings in Supabase."""
+        if self._client:
+            try:
+                # First fetch current portfolio to get total_capital and risk_profile
+                current = self.get_user_portfolio(user_id)
+                updated_data = {
+                    "holdings": holdings,
+                    "total_capital": current.get("total_capital", 500000.0),
+                    "risk_profile": current.get("risk_profile", "moderate")
+                }
+                result = (
+                    self._client.table("portfolios")
+                    .upsert({"user_id": user_id, **updated_data})
+                    .execute()
+                )
+                if result.data:
+                    return result.data[0]
+            except Exception as e:
+                logging.error(f"Failed to update portfolio holdings for {user_id}: {e}")
+        
+        # Fallback for demo mode
+        return {"user_id": user_id, "holdings": holdings, "source": "demo_update"}
+
     def get_setup_memory(
         self,
         symbol: str,

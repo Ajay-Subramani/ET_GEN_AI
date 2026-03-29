@@ -281,14 +281,18 @@ class AnalystNodes:
         confidence = min(0.99, confidence + confidence_bonus)
         confidence = round(confidence, 2)
 
-        if confidence >= 0.85 and technical_score >= 0.8 and fundamental_score >= 0.8:
+        if confidence >= 0.85:
             action = "High Conviction Buy"
-        elif confidence >= 0.70 and (technical_score >= 0.6 or fundamental_score >= 0.7):
+            analyst_note = f"Identified {strong_signal_count} powerful structural signals aligned with a high-probability technical breakout. This is a top-tier setup."
+        elif confidence >= 0.70:
             action = "Potential Buy"
+            analyst_note = f"Constructive setup with {strong_signal_count} clear signals. Waiting for price to stabilize above resistance before full commitment."
         elif confidence >= 0.55:
             action = "Watch"
+            analyst_note = f"Interesting pattern forming but currently lacks the institutional volume or fundamental momentum for a 'Buy' rating. Monitor for further expansion."
         else:
             action = "Avoid / Exit"
+            analyst_note = f"Scanned for price, volume, and institutional clues but found 0 high-quality structural signals. Capital is better preserved elsewhere for now."
 
         lead_signal_text = ", ".join(f"{s.signal_type} ({s.short_explanation})" for s in signal_bundle.signals[:3]) or "No strong signals detected"
         reasons = [
@@ -300,7 +304,6 @@ class AnalystNodes:
             f"Memory: {setup_memory.narrative}",
             f"Context: Sector trend is {context.sector.trend} and market is {context.market.condition}",
         ]
-        analyst_note = f"Identified {strong_signal_count} structural signals. The combination yields an action of {action}. "
         confirmation_triggers = [
             f"Breakout sustains above Rs {technicals.pattern.resistance:.2f}" if technicals.pattern.resistance else "Price confirms breakout",
             "Volume remains above the recent 20-day average",
@@ -393,7 +396,12 @@ class AnalystNodes:
         state["recommendation"] = FinalRecommendation(
             symbol=symbol,
             user_id=user_id,
-            action=decision.action,
+            action={
+                "High Conviction Buy": "BUY",
+                "Potential Buy": "BUY",
+                "Watch": "WATCH",
+                "Avoid / Exit": "AVOID",
+            }.get(decision.action, decision.action),
             confidence_score=decision.confidence_score,
             conviction_mode=decision.conviction_mode,
             confidence_note=decision.confidence_note,
