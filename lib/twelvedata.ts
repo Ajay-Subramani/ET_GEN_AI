@@ -36,6 +36,27 @@ function toNumber(value: unknown) {
   return Number.isFinite(num) ? num : 0;
 }
 
+async function readKeyFromAgentEnvFile(): Promise<string | null> {
+  try {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const envPath = path.join(process.cwd(), "ai-investor-agent", ".env");
+    const raw = await fs.readFile(envPath, "utf8");
+    for (const line of raw.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const match = trimmed.match(/^TWELVEDATA_API_KEY\s*=\s*(.+)\s*$/);
+      if (!match) continue;
+      const value = match[1] ?? "";
+      const cleaned = value.trim().replace(/^["']|["']$/g, "");
+      return cleaned || null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function demoCandles(symbol: string): Candle[] {
   const base = 100 + (symbol.toUpperCase().charCodeAt(0) % 20);
   const now = new Date();
@@ -68,7 +89,9 @@ export async function fetchTimeSeries(
     outputsize = 10,
   }: { interval?: string; outputsize?: number } = {},
 ): Promise<TimeSeriesResult> {
-  const apiKey = process.env.TWELVEDATA_API_KEY?.trim();
+  const apiKeyRaw = process.env.TWELVEDATA_API_KEY ?? process.env.NEXT_PUBLIC_TWELVEDATA_API_KEY;
+  const apiKeyFromEnv = apiKeyRaw?.trim().replace(/^["']|["']$/g, "");
+  const apiKey = apiKeyFromEnv || (await readKeyFromAgentEnvFile());
   const upper = symbol.toUpperCase().trim();
 
   if (!apiKey) {
@@ -78,7 +101,8 @@ export async function fetchTimeSeries(
       symbol: upper,
       interval,
       candles: demoCandles(upper),
-      warning: "TWELVEDATA_API_KEY is not set; using deterministic demo candles.",
+      warning:
+        "TWELVEDATA_API_KEY not found (checked root env and ai-investor-agent/.env); using deterministic demo candles.",
     };
   }
 
