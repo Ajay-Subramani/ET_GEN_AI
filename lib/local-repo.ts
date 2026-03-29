@@ -55,7 +55,11 @@ export function removeMonitored(userId: string, symbol: string) {
   return store.monitored.length !== before;
 }
 
-export function updateMonitoredResult(userId: string, symbol: string, result: unknown) {
+export function updateMonitoredResult(
+  userId: string,
+  symbol: string,
+  result: RecommendationResponse | null,
+) {
   const store = getStore();
   const upper = symbol.toUpperCase();
   const record = store.monitored.find((m) => m.user_id === userId && m.symbol === upper);
