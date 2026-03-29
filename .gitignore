@@ -50,3 +50,5 @@ ai-investor-agent/.pytest_cache/
 ai-investor-agent/.mypy_cache/
 ai-investor-agent/.ruff_cache/
 ai-investor-agent/.DS_Store
+
+.worktrees/
