@@ -98,15 +98,14 @@ ACTIONABLE DECISION
 
 ## Project Structure
 
-* `src/app/` → Next.js pages and layouts
-* `src/app/api/analyze-stock/route.js` → API route (core backend)
-* `src/lib/agent.js` → agent pipeline logic
-* `src/lib/twelvedata.js` → market data fetch logic
-* `src/app/globals.css` → styles
+* `app/` → Next.js pages and layouts
+* `app/api/analyze-stock/route.ts` → API route (core backend)
+* `lib/opportunity-agent.ts` → agent pipeline logic (3-step deterministic agent)
+* `lib/twelvedata.ts` → TwelveData `time_series` fetch + demo fallback
 
 Alias:
 
-* `@/*` → `src/*`
+* `@/*` → project root (see `tsconfig.json`)
 
 ---
 
@@ -134,7 +133,11 @@ Alias:
 
 ### Endpoint
 
-POST `/api/analyze-stock`
+POST `/api/analyze-stock` (preferred)
+
+Compatibility:
+
+POST `/api/analyze` (used by the UI)
 
 ### Input
 
@@ -142,6 +145,15 @@ POST `/api/analyze-stock`
 {
   "stock": "RELIANCE",
   "portfolio": ["TCS", "INFY"]
+}
+```
+
+The UI also supports:
+
+```json
+{
+  "symbol": "RELIANCE",
+  "user_id": "user_default"
 }
 ```
 

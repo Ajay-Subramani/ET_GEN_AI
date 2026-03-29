@@ -1,0 +1,27 @@
+Evaluation Focus: 
+Signal quality over summarization (real alpha, not news rehash), depth of financial data
+integration, agent's ability to act on signals — not just surface them — accuracy of technical pattern detection,
+and quality of portfolio-aware personalization.
+
+Agentic Architecture Expectation: 
+Teams must demonstrate an agent that completes at least 3
+sequential analysis steps without human input (e.g. detect signal → enrich with context → generate
+actionable alert). For video or chart-generation builds, the full pipeline from raw data ingestion to
+final output must be autonomous. Extra credit for agents that learn from user portfolio context and
+personalise signals accordingly.
+
+Submission Requirements
+
+GitHub Repository: A public GitHub repository containing all source code, a clear README with setup
+instructions, and commit history showing the build process.
+
+3-Minute Pitch Video: A recorded walkthrough covering the problem, solution, and demo highlights — showing
+the agent completing its workflow from start to finish. Screen recordings are fine if the system needs external
+API access that cannot be demoed live.
+
+Architecture document: A 1–2 page diagram and description showing agent roles, how they communicate, tool
+integrations, and error-handling logic. This carries a lot of weight. A clear architecture with a simpler prototype
+will beat a complex demo with no legible design.
+
+Impact model: A quantified estimate of business impact (time saved, cost reduced, revenue recovered). State
+your assumptions. Back-of-envelope math is fine as long as the logic holds up.

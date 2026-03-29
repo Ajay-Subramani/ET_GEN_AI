@@ -1008,10 +1008,11 @@ function SignalsRadarScreen({ userId }: { userId: string }) {
                     <div className="mb-4 py-2 text-sm text-slate-400 italic">Waiting for first scan...</div>
                   )}
 
-                  <div className="pt-4 border-t border-slate-50 flex items-center justify-between text-[10px] font-bold uppercase tracking-widest">
+                    <div className="pt-4 border-t border-slate-50 flex items-center justify-between text-[10px] font-bold uppercase tracking-widest">
                     <div className="flex gap-4">
                       <button 
-                        onClick={() => setSelectedReport(res)}
+                        onClick={() => setSelectedReport(res ?? null)}
+                        disabled={!res}
                         className="text-[color:var(--primary)] hover:underline"
                       >
                        Open Report →

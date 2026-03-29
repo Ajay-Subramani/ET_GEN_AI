@@ -1,4 +1,6 @@
-import { proxyGet } from "@/lib/ai-investor";
+import { getSetupMemory } from "@/lib/local-repo";
+
+export const runtime = "nodejs";
 
 export async function GET(
   request: Request,
@@ -6,5 +8,9 @@ export async function GET(
 ) {
   const { symbol } = await context.params;
   const searchParams = new URL(request.url).searchParams;
-  return proxyGet(`/memory/${symbol}`, searchParams);
+  const patternName = searchParams.get("pattern_name") || "breakout";
+  const marketCondition = searchParams.get("market_condition") || "neutral";
+  const signalStack = searchParams.getAll("signal_stack");
+  const memory = getSetupMemory(symbol, patternName, marketCondition, signalStack);
+  return Response.json(memory, { status: 200 });
 }

@@ -1,7 +1,13 @@
-import { proxyPostFormData } from "@/lib/ai-investor";
+export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  const formData = await request.formData();
-  return proxyPostFormData("/api/portfolio/extract", formData);
+  // This project is intended to run locally without external LLM services by default.
+  // Portfolio extraction can be added later via Ollama vision / external APIs.
+  await request.formData();
+  return Response.json(
+    {
+      message: "Portfolio extraction is not configured for local mode.",
+    },
+    { status: 501 },
+  );
 }
-
