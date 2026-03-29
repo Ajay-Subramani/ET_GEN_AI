@@ -31,6 +31,18 @@ export type TimeSeriesResult =
       error: string;
     };
 
+export type TimeSeriesDebugResult =
+  | (Extract<TimeSeriesResult, { ok: true }> & {
+      request: { url: string; redacted_url: string };
+      response: { ok: boolean; status: number };
+      payload: unknown | null;
+    })
+  | (Extract<TimeSeriesResult, { ok: false }> & {
+      request: { url: string; redacted_url: string };
+      response: { ok: boolean; status: number };
+      payload: unknown | null;
+    });
+
 function toNumber(value: unknown) {
   const num = typeof value === "number" ? value : Number(value);
   return Number.isFinite(num) ? num : 0;
@@ -82,20 +94,21 @@ function demoCandles(symbol: string): Candle[] {
   return candles;
 }
 
-export async function fetchTimeSeries(
+async function fetchTimeSeriesInternal(
   symbol: string,
   {
     interval = "1day",
     outputsize = 10,
-  }: { interval?: string; outputsize?: number } = {},
-): Promise<TimeSeriesResult> {
+    debug = false,
+  }: { interval?: string; outputsize?: number; debug?: boolean } = {},
+): Promise<TimeSeriesResult | TimeSeriesDebugResult> {
   const apiKeyRaw = process.env.TWELVEDATA_API_KEY ?? process.env.NEXT_PUBLIC_TWELVEDATA_API_KEY;
   const apiKeyFromEnv = apiKeyRaw?.trim().replace(/^["']|["']$/g, "");
   const apiKey = apiKeyFromEnv || (await readKeyFromAgentEnvFile());
   const upper = symbol.toUpperCase().trim();
 
   if (!apiKey) {
-    return {
+    const demo: Extract<TimeSeriesResult, { ok: true; source: "demo" }> = {
       ok: true,
       source: "demo",
       symbol: upper,
@@ -103,6 +116,13 @@ export async function fetchTimeSeries(
       candles: demoCandles(upper),
       warning:
         "TWELVEDATA_API_KEY not found (checked root env and ai-investor-agent/.env); using deterministic demo candles.",
+    };
+    if (!debug) return demo;
+    return {
+      ...demo,
+      request: { url: "n/a", redacted_url: "n/a" },
+      response: { ok: true, status: 200 },
+      payload: null,
     };
   }
 
@@ -117,6 +137,9 @@ export async function fetchTimeSeries(
   url.searchParams.set("timezone", "exchange");
   url.searchParams.set("type", "stock");
 
+  const redacted = new URL(url);
+  redacted.searchParams.set("apikey", "REDACTED");
+
   try {
     const response = await fetch(url, { cache: "no-store" });
     const payload: unknown = await response.json();
@@ -128,18 +151,38 @@ export async function fetchTimeSeries(
         (typeof messageFromBody === "string" && messageFromBody) ||
         response.statusText ||
         "TwelveData request failed";
-      return { ok: false, source: "twelvedata", symbol: upper, interval, error: String(message) };
+      const failure: Extract<TimeSeriesResult, { ok: false }> = {
+        ok: false,
+        source: "twelvedata",
+        symbol: upper,
+        interval,
+        error: String(message),
+      };
+      if (!debug) return failure;
+      return {
+        ...failure,
+        request: { url: url.toString(), redacted_url: redacted.toString() },
+        response: { ok: false, status: response.status },
+        payload,
+      };
     }
 
     const maybeValues =
       payload && typeof payload === "object" ? (payload as Record<string, unknown>).values : undefined;
     if (!Array.isArray(maybeValues)) {
-      return {
+      const failure: Extract<TimeSeriesResult, { ok: false }> = {
         ok: false,
         source: "twelvedata",
         symbol: upper,
         interval,
         error: "Unexpected TwelveData response shape",
+      };
+      if (!debug) return failure;
+      return {
+        ...failure,
+        request: { url: url.toString(), redacted_url: redacted.toString() },
+        response: { ok: true, status: response.status },
+        payload,
       };
     }
 
@@ -159,9 +202,49 @@ export async function fetchTimeSeries(
       })
       .filter((row: Candle) => Boolean(row.datetime));
 
-    return { ok: true, source: "twelvedata", symbol: upper, interval, candles };
+    const ok: Extract<TimeSeriesResult, { ok: true; source: "twelvedata" }> = {
+      ok: true,
+      source: "twelvedata",
+      symbol: upper,
+      interval,
+      candles,
+    };
+    if (!debug) return ok;
+    return {
+      ...ok,
+      request: { url: url.toString(), redacted_url: redacted.toString() },
+      response: { ok: true, status: response.status },
+      payload,
+    };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown TwelveData error";
-    return { ok: false, source: "twelvedata", symbol: upper, interval, error: message };
+    const failure: Extract<TimeSeriesResult, { ok: false }> = {
+      ok: false,
+      source: "twelvedata",
+      symbol: upper,
+      interval,
+      error: message,
+    };
+    if (!debug) return failure;
+    return {
+      ...failure,
+      request: { url: url.toString(), redacted_url: redacted.toString() },
+      response: { ok: false, status: 0 },
+      payload: null,
+    };
   }
+}
+
+export async function fetchTimeSeries(
+  symbol: string,
+  opts: { interval?: string; outputsize?: number } = {},
+): Promise<TimeSeriesResult> {
+  return (await fetchTimeSeriesInternal(symbol, { ...opts, debug: false })) as TimeSeriesResult;
+}
+
+export async function fetchTimeSeriesDebug(
+  symbol: string,
+  opts: { interval?: string; outputsize?: number } = {},
+): Promise<TimeSeriesDebugResult> {
+  return (await fetchTimeSeriesInternal(symbol, { ...opts, debug: true })) as TimeSeriesDebugResult;
 }
